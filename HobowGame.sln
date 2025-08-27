@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hobow_Server", "Hobow_Server\Hobow_Server.csproj", "{19EACC07-5C66-4F72-8E8C-8E0021F7DA57}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharedLibrary", "SharedLibrary\SharedLibrary.csproj", "{5AEBAB01-A94F-4A63-AAC7-9BFF40757749}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{19EACC07-5C66-4F72-8E8C-8E0021F7DA57}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{19EACC07-5C66-4F72-8E8C-8E0021F7DA57}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{19EACC07-5C66-4F72-8E8C-8E0021F7DA57}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{19EACC07-5C66-4F72-8E8C-8E0021F7DA57}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5AEBAB01-A94F-4A63-AAC7-9BFF40757749}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5AEBAB01-A94F-4A63-AAC7-9BFF40757749}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5AEBAB01-A94F-4A63-AAC7-9BFF40757749}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5AEBAB01-A94F-4A63-AAC7-9BFF40757749}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
