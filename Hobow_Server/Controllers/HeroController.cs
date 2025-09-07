@@ -1,9 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using SharedLibrary;
 using Hobow_Server.Services;
 using Microsoft.AspNetCore.Authorization;
 using SharedLibrary.Requests;
-using Microsoft.EntityFrameworkCore;
 using SharedLibrary.Responses;
 
 namespace Hobow_Server.Controllers;
@@ -14,99 +12,131 @@ namespace Hobow_Server.Controllers;
 public class HeroController : ControllerBase
 {
     private readonly IHeroService _heroService;
-    private readonly GameDbContext _context;
 
-    public HeroController(IHeroService heroService, GameDbContext context)
+    public HeroController(IHeroService heroService)
     {
         _heroService = heroService;
-        _context = context;
-
-
-        var user = new User
-        {
-            Username = "TestUser",
-            PasswordHash = "password",
-        };
-
-        _context.Add(user);
-        _context.SaveChanges();
     }
+
     [HttpGet("{id}")]
-    public HeroResponse Get([FromRoute] int id)
+    public async Task<ActionResult<HeroResponse>> Get([FromRoute] int id)
     {
-        var hero = _context.Heroes.Include(h => h.User).First(h => h.Id == id);
-        _heroService.DoSomething();
-        return new HeroResponse
+        try
         {
-            Id = hero.Id,
-            Name = hero.Name,
-            Level = hero.Level,
-            UserId = hero.User.Id,
-            Username = hero.User.Username
-        };
+            var hero = await _heroService.GetHeroResponseAsync(id);
+            return Ok(hero);
+        }
+        catch (ArgumentException ex)
+        {
+            return NotFound(new { Error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
     }
 
     [HttpPost]
-    public HeroResponse Post(CreateHeroRequest request)
+    public async Task<ActionResult<HeroResponse>> Post(CreateHeroRequest request)
     {
-        var userId = int.Parse(User.FindFirst("id").Value);
-        var user = _context.Users.Include(u => u.Heroes).First(u => u.Id == userId);
-
-        var hero = new Hero(){
-            Name = request.Name,
-            User = user
-        };
-
-        _context.Add(hero);
-        _context.SaveChanges();
-
-        return new SharedLibrary.Responses.HeroResponse
+        try
         {
-            Id = hero.Id,
-            Name = hero.Name,
-            Level = hero.Level,
-            UserId = hero.User.Id,
-            Username = hero.User.Username
-        };
+            var userId = int.Parse(User.FindFirst("id").Value);
+            var hero = await _heroService.CreateHeroResponseAsync(request, userId);
+            return Ok(hero);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
     }
 
-    [Authorize]
     [HttpGet("my")]
-    public IEnumerable<HeroResponse> MyHeroes()
+    public async Task<ActionResult<IEnumerable<HeroResponse>>> MyHeroes()
     {
-        var userIdClaim = User.FindFirst("id")?.Value;
-        if (string.IsNullOrEmpty(userIdClaim)) return Enumerable.Empty<HeroResponse>();
-        var userId = int.Parse(userIdClaim);
-
-        var heroes = _context.Heroes.Include(h => h.User).Where(h => h.User.Id == userId).ToList();
-        return heroes.Select(hero => new HeroResponse
+        try
         {
-            Id = hero.Id,
-            Name = hero.Name,
-            Level = hero.Level,
-            UserId = hero.User.Id,
-            Username = hero.User.Username
-        });
+            var userIdClaim = User.FindFirst("id")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { Error = "User not authenticated" });
+
+            var userId = int.Parse(userIdClaim);
+            var heroes = await _heroService.GetUserHeroesResponseAsync(userId);
+            return Ok(heroes);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
     }
 
-    [Authorize]
     [HttpPost("select/{id}")]
-    public ActionResult<HeroResponse> SelectHero([FromRoute] int id)
+    public async Task<ActionResult<HeroResponse>> SelectHero([FromRoute] int id)
     {
-        var userIdClaim = User.FindFirst("id")?.Value;
-        if (string.IsNullOrEmpty(userIdClaim)) return Unauthorized();
-
-        var userId = int.Parse(userIdClaim);
-        var hero = _context.Heroes.Include(h => h.User).FirstOrDefault(h => h.Id == id);
-        if (hero == null || hero.User.Id != userId) return Forbid();
-
-        return new HeroResponse
+        try
         {
-            Id = hero.Id,
-            Name = hero.Name,
-            Level = hero.Level,
-            UserId = hero.User.Id,
-            Username = hero.User.Username
-        };
+            var userIdClaim = User.FindFirst("id")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { Error = "User not authenticated" });
+
+            var userId = int.Parse(userIdClaim);            
+            var hero = await _heroService.SelectHeroAsync(id, userId, "REST_API");
+
+            if (hero == null)
+                return NotFound(new { Error = $"Hero with ID {id} not found" });
+
+            return Ok(hero);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Forbid(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
+    }
+
+    [HttpGet("active")]
+    public async Task<ActionResult<HeroResponse>> GetActiveHero()
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst("id")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { Error = "User not authenticated" });
+
+            var userId = int.Parse(userIdClaim);
+            var hero = await _heroService.GetActiveHeroResponseAsync(userId);
+
+            if (hero == null)
+                return NotFound(new { Error = "No active hero selected" });
+
+            return Ok(hero);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
+    }
+
+    [HttpPost("deselect")]
+    public async Task<ActionResult> DeselectHero()
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst("id")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { Error = "User not authenticated" });
+
+            var userId = int.Parse(userIdClaim);
+            await _heroService.DeselectHeroAsync(userId);
+
+            return Ok(new { Message = "Hero deselected successfully" });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
     }
 }

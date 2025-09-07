@@ -1,5 +1,4 @@
-﻿namespace SharedLibrary;
-
+﻿namespace Hobow_Server.Models;
 public class Hero
 {
     public int Id { get; set; }

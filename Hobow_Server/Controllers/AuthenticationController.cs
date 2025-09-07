@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Hobow_Server.Services;
 using SharedLibrary.Requests;
 using SharedLibrary.Responses;
@@ -40,5 +41,59 @@ public class AuthenticationController : ControllerBase
         {
             Token = content
         });
+    }
+
+    [HttpGet("session-status")]
+    [Authorize]
+    public IActionResult GetSessionStatus()
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst("id")?.Value;
+            var sessionIdClaim = User.FindFirst("sessionId")?.Value;
+            
+            if (string.IsNullOrEmpty(userIdClaim) || string.IsNullOrEmpty(sessionIdClaim))
+                return Unauthorized(new { Error = "User not authenticated" });
+
+            // Session đã được validate bởi middleware
+            return Ok(new { 
+                IsOnline = true,
+                Message = "Session is active"
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
+    }
+
+    [HttpPost("logout")]
+    [Authorize]
+    public IActionResult Logout()
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst("id")?.Value;
+            if (string.IsNullOrEmpty(userIdClaim))
+                return Unauthorized(new { Error = "User not authenticated" });
+
+            var userId = int.Parse(userIdClaim);
+            
+            // CLEAR SESSION TRONG DATABASE
+            var result = _authService.Logout(userId);
+            
+            if (result.success)
+            {
+                return Ok(new { Message = "Logged out successfully" });
+            }
+            else
+            {
+                return BadRequest(new { Error = result.content });
+            }
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Error = "Internal server error" });
+        }
     }
 }

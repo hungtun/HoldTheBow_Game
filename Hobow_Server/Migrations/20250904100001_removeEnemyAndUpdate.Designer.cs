@@ -3,6 +3,7 @@ using Hobow_Server;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Hobow_Server.Migrations
 {
     [DbContext(typeof(GameDbContext))]
-    partial class GameDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250904100001_removeEnemyAndUpdate")]
+    partial class removeEnemyAndUpdate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,7 +24,7 @@ namespace Hobow_Server.Migrations
 
             MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
 
-            modelBuilder.Entity("Hobow_Server.Models.EnemyDefinition", b =>
+            modelBuilder.Entity("SharedLibrary.DataModels.EnemyDefinition", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -54,19 +57,13 @@ namespace Hobow_Server.Migrations
                     b.ToTable("EnemyDefinitions", (string)null);
                 });
 
-            modelBuilder.Entity("Hobow_Server.Models.EnemySpawnPoint", b =>
+            modelBuilder.Entity("SharedLibrary.DataModels.EnemySpawnPoint", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int");
 
                     MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<float>("CenterX")
-                        .HasColumnType("float");
-
-                    b.Property<float>("CenterY")
-                        .HasColumnType("float");
 
                     b.Property<int>("EnemyDefinitionId")
                         .HasColumnType("int");
@@ -84,7 +81,10 @@ namespace Hobow_Server.Migrations
                     b.Property<int>("SpawnIntervalSec")
                         .HasColumnType("int");
 
-                    b.Property<float>("SpawnRadius")
+                    b.Property<float>("X")
+                        .HasColumnType("float");
+
+                    b.Property<float>("Y")
                         .HasColumnType("float");
 
                     b.HasKey("Id");
@@ -92,7 +92,7 @@ namespace Hobow_Server.Migrations
                     b.ToTable("EnemySpawnPoints", (string)null);
                 });
 
-            modelBuilder.Entity("Hobow_Server.Models.Hero", b =>
+            modelBuilder.Entity("SharedLibrary.Hero", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -117,7 +117,7 @@ namespace Hobow_Server.Migrations
                     b.ToTable("Hero", (string)null);
                 });
 
-            modelBuilder.Entity("Hobow_Server.Models.User", b =>
+            modelBuilder.Entity("SharedLibrary.User", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -125,14 +125,7 @@ namespace Hobow_Server.Migrations
 
                     MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("ActiveSessionId")
-                        .HasColumnType("longtext");
-
                     b.Property<string>("PasswordHash")
-                        .IsRequired()
-                        .HasColumnType("longtext");
-
-                    b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("longtext");
 
@@ -145,9 +138,9 @@ namespace Hobow_Server.Migrations
                     b.ToTable("Users", (string)null);
                 });
 
-            modelBuilder.Entity("Hobow_Server.Models.Hero", b =>
+            modelBuilder.Entity("SharedLibrary.Hero", b =>
                 {
-                    b.HasOne("Hobow_Server.Models.User", "User")
+                    b.HasOne("SharedLibrary.User", "User")
                         .WithMany("Heroes")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -156,7 +149,7 @@ namespace Hobow_Server.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Hobow_Server.Models.User", b =>
+            modelBuilder.Entity("SharedLibrary.User", b =>
                 {
                     b.Navigation("Heroes");
                 });
