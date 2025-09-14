@@ -1,0 +1,48 @@
+{
+    "Map/SizeTest": {
+        "height": 4300,
+        "width": 2
+    },
+    "activeFile": "Overworld_Tileset.tsx",
+    "expandedProjectPaths": [
+    ],
+    "file.lastUsedOpenFilter": "All Files (*)",
+    "fileStates": {
+        "": {
+            "scaleInDock": 1,
+            "scaleInEditor": 4
+        },
+        "Overworld_Tileset.tsx": {
+            "scaleInDock": 3,
+            "scaleInEditor": 4
+        },
+        "untitled.tmx": {
+            "scale": 1.7954999999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 204.39988861041496,
+                "y": 204.39988861041493
+            }
+        }
+    },
+    "last.imagePath": "/Users/hung/Downloads/temp/hacker/HoldTheBow_Game/Hold The Bow/Assets/Art/gfx",
+    "map.height": 25,
+    "map.lastUsedFormat": "tmx",
+    "map.tileHeight": 16,
+    "map.tileWidth": 16,
+    "map.width": 25,
+    "openFiles": [
+        "Overworld_Tileset.tsx",
+        "untitled.tmx"
+    ],
+    "project": "untitled.tiled-project",
+    "recentFiles": [
+        "untitled.tmx",
+        "Overworld_Tileset.tsx"
+    ],
+    "tileset.lastUsedFormat": "tsx",
+    "tileset.tileSize": {
+        "height": 16,
+        "width": 16
+    }
+}

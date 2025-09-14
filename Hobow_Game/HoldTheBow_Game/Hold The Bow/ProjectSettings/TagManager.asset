@@ -1,0 +1,59 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!78 &1
+TagManager:
+  serializedVersion: 2
+  tags:
+  - Map
+  - Enemy
+  - Wall
+  - Obstacle
+  layers:
+  - Default
+  - TransparentFX
+  - Ignore Raycast
+  - 
+  - Water
+  - UI
+  - Player
+  - 
+  - Background
+  - LocalPlayer
+  - RemotePlayer
+  - 
+  - Bow
+  - MapObjects
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+  m_SortingLayers:
+  - name: Default
+    uniqueID: 0
+    locked: 0
+  - name: Player
+    uniqueID: 1581911377
+    locked: 0
+  - name: MapObjects
+    uniqueID: 773017173
+    locked: 0
+  - name: Background
+    uniqueID: 1909019817
+    locked: 0
+  - name: Bow
+    uniqueID: 548748745
+    locked: 0
