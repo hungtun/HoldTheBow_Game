@@ -1,105 +1,186 @@
-## Hold The Bow (Multiplayer 2D) – Game Online Realtime bằng Unity + ASP.NET Core SignalR
+# Hold The Bow - Multiplayer 2D Game
 
-Một dự án demo game bắn cung 2D nhiều người chơi, tập trung vào trải nghiệm điều khiển mượt mà (client prediction) nhưng vẫn đảm bảo tính công bằng (server authoritative + reconciliation). Mục tiêu là code sạch, dễ đọc, dễ mở rộng.
+**Game bắn cung 2D nhiều người chơi** được phát triển bằng Unity + ASP.NET Core SignalR, tập trung vào trải nghiệm điều khiển mượt mà (client prediction) nhưng vẫn đảm bảo tính công bằng (server authoritative + reconciliation). Mục tiêu là code sạch, dễ đọc, dễ mở rộng.
 
-### Tính năng nổi bật
+## 🎮 Video Demo
 
-- **Realtime Multiplayer (SignalR)**: di chuyển nhân vật mượt, cập nhật trạng thái theo thời gian thực giữa các client.
-- **Client Prediction + Server Reconciliation**: dự đoán chuyển động ở client để giảm độ trễ, server là nguồn dữ liệu tin cậy; tự động hiệu chỉnh khi lệch.
-- **Không va chạm giữa hero, vẫn va chạm môi trường**: thiết kế layer hợp lý; remote player không dùng physics simulation nhưng vẫn hiển thị đúng.
-- **Quản lý phiên & Đăng xuất an toàn**: hỗ trợ logout chủ động và auto-logout khi thoát app/thu nhỏ; tránh lỗi `ObjectDisposedException`.
-- **Mã nguồn tách lớp rõ ràng**: SharedLibrary dùng chung Request/Response; Server và Unity Client độc lập, dễ build và triển khai.
+[![Watch Demo Video](https://img.youtube.com/vi/_9BCwl-hJc8/0.jpg)](https://www.youtube.com/watch?v=_9BCwl-hJc8)
 
-### Kiến trúc tổng quan
+## ✨ Tính năng nổi bật
 
-- `Hobow_Server` (ASP.NET Core):
-  - Hub SignalR (`HeroHub`) nhận input (direction/speed), tính vị trí, broadcast về client.
-  - `GameState` quản lý danh sách hero đang online; `PlayerSessionHandler` xử lý logout.
-- `Hold The Bow` (Unity Client):
-  - `LocalPlayerController` nhận input, dự đoán di chuyển (prediction), gửi lệnh lên server và nhận cập nhật để reconcile.
-  - `RemotePlayerManager` tạo/xóa và cập nhật vị trí các người chơi khác.
-  - `LogoutManager` xử lý đăng xuất, đổi scene về màn hình đăng nhập.
-- `SharedLibrary`: Chứa Contract (DTO) dùng chung cho request/response giữa server và client.
+- **🎯 Realtime Multiplayer (SignalR)**: Di chuyển nhân vật mượt mà, cập nhật trạng thái theo thời gian thực giữa các client
+- **⚡ Client Prediction + Server Reconciliation**: Dự đoán chuyển động ở client để giảm độ trễ, server là nguồn dữ liệu tin cậy; tự động hiệu chỉnh khi lệch
+- **🤖 Enemy AI với Collision Detection**: Enemy thông minh đuổi theo hero, có collision detection giữa các enemy và với map
+- **🏃‍♂️ Physics System**: Hệ thống va chạm hoàn chỉnh cho map, hero-hero, hero-enemy, và enemy-enemy
+- **🔐 JWT Authentication**: Hệ thống xác thực bảo mật với JWT tokens
+- **📦 Clean Architecture**: SharedLibrary dùng chung Request/Response; Server và Unity Client độc lập, dễ build và triển khai
+- **🎮 Multiple Heroes & Enemies**: Hỗ trợ nhiều người chơi và enemy cùng lúc
 
-### Công nghệ sử dụng
+## 🏗️ Kiến trúc tổng quan
 
-- Server: **.NET 8**, **ASP.NET Core**, **SignalR**, **JWT Auth** (đã chuẩn bị hạ tầng xác thực).
-- Client: **Unity 2022+**, **C#**, **Rigidbody2D** (local), **Animator** cho chuyển động.
-- Giao tiếp: **Shared DLL** (Requests/Responses) để đồng bộ kiểu dữ liệu giữa client và server.
+### Server (ASP.NET Core)
 
-### Cấu trúc thư mục chính
+- **SignalR Hubs**: `HeroHub`, `EnemyHub` xử lý real-time communication
+- **Game State Management**: `GameState` quản lý heroes và enemies đang online
+- **Physics System**: `ServerPhysicsManager` xử lý collision detection server-side
+- **Enemy AI**: `EnemyAIService` chạy AI logic cho enemies
+- **Authentication**: JWT-based authentication với session management
+
+### Client (Unity)
+
+- **Local Player**: `LocalPlayerController` với client prediction
+- **Remote Players**: `RemotePlayerManager` quản lý người chơi khác
+- **Enemy Management**: `EnemyClientManager` hiển thị và đồng bộ enemies
+- **Map System**: `MapDataManager` xử lý collision objects từ server
+
+### Shared Library
+
+- **Contracts**: Request/Response DTOs dùng chung giữa server và client
+- **Data Models**: `MapData`, `Hero`, `Enemy` models
+
+## 🛠️ Công nghệ sử dụng
+
+### Server
+
+- **.NET 8** - Framework chính
+- **ASP.NET Core** - Web framework
+- **SignalR** - Real-time communication
+- **Entity Framework Core** - Database ORM
+- **JWT Authentication** - Security
+
+### Client
+
+- **Unity 2022+** - Game engine
+- **C#** - Programming language
+- **Rigidbody2D** - Physics simulation
+- **Animator** - Animation system
+
+### Communication
+
+- **Shared DLL** - Common contracts (Requests/Responses)
+- **SignalR** - Real-time messaging
+
+## 📁 Cấu trúc thư mục
 
 ```
-  HoldTheBow_Game/
-    Hobow_Server/            # ASP.NET Core server (SignalR)
-    HoldTheBow_Game/Hold The Bow/  # Unity project (client)
-    SharedLibrary/           # Contracts (Requests/Responses)
+Hobow_Game/
+├── Hobow_Server/                    # ASP.NET Core server
+│   ├── Controllers/                 # API controllers
+│   ├── Hubs/                       # SignalR hubs
+│   ├── Handlers/                   # Business logic handlers
+│   ├── Services/                   # Background services
+│   ├── Models/                     # Data models
+│   ├── Physics/                    # Server-side physics
+│   └── Migrations/                 # Database migrations
+├── HoldTheBow_Game/Hold The Bow/   # Unity client project
+│   ├── Assets/                     # Game assets
+│   │   ├── _Scripts/              # Game scripts
+│   │   ├── Prefabs/               # Game prefabs
+│   │   ├── Scenes/                # Game scenes
+│   │   └── DLLs/                  # Shared library DLL
+│   ├── ProjectSettings/            # Unity project settings
+│   └── UserSettings/               # Editor settings
+└── SharedLibrary/                  # Common contracts
+    ├── Requests/                   # Request DTOs
+    ├── Responses/                  # Response DTOs
+    └── DataModels/                 # Shared data models
 ```
 
-### Hướng dẫn chạy nhanh
+## 🚀 Hướng dẫn chạy nhanh
 
-1. Chạy Server (ASP.NET Core)
+### 1. Clone Repository
 
-- Yêu cầu: .NET SDK 8
-
+```bash
+git clone https://github.com/hungtun/HoldTheBow_Game.git
+cd HoldTheBow_Game
 ```
+
+### 2. Chạy Server (ASP.NET Core)
+
+**Yêu cầu**: .NET SDK 8
+
+```bash
 cd Hobow_Game/Hobow_Server
 dotnet restore
-dotnet ef database update   # nếu có dùng migrations
+dotnet ef database update   # Cập nhật database
 dotnet run
 ```
 
-Server sẽ lắng nghe trên cấu hình trong `appsettings.Development.json` (ví dụ: `http://localhost:5172`).
+Server sẽ lắng nghe trên `http://localhost:5172` (cấu hình trong `appsettings.Development.json`).
 
-2. Build SharedLibrary và copy DLL sang Unity
+### 3. Build SharedLibrary
 
-```
+```bash
 cd Hobow_Game/SharedLibrary
 dotnet build -c Debug
 cp bin/Debug/netstandard2.1/SharedLibrary.dll ../HoldTheBow_Game/Hold\ The\ Bow/Assets/DLLs/
 ```
 
-3. Mở Unity Client
+### 4. Mở Unity Client
 
-- Mở Unity qua folder: `Hobow_Game/HoldTheBow_Game/Hold The Bow`
-- Mở scene Login (index 0), đăng nhập, sau đó connect vào server.
+1. Mở Unity Hub
+2. Add project from disk: `Hobow_Game/HoldTheBow_Game/Hold The Bow`
+3. Mở scene **Login** (index 0)
+4. Đăng nhập và kết nối vào server
 
-Gợi ý: Khi sửa `SharedLibrary`, nhớ build lại và copy DLL trước khi Play trong Unity.
+> **Lưu ý**: Khi sửa `SharedLibrary`, nhớ build lại và copy DLL trước khi Play trong Unity.
 
-### Cách hoạt động đồng bộ vị trí
+## ⚙️ Cách hoạt động
 
-- Client gửi input (direction + speed) lên server theo tick.
-- Server tính toán vị trí authoritative và trả về `HeroMoveResponse` kèm timestamp.
+### Đồng bộ vị trí
+
+- Client gửi input (direction + speed) lên server theo tick
+- Server tính toán vị trí authoritative và trả về `HeroMoveResponse` kèm timestamp
 - Client chạy prediction để cảm giác mượt ngay khi nhấn phím; khi nhận gói từ server:
-  - Nếu lệch nhẹ: lerp mượt về vị trí server.
-  - Nếu lệch lớn: snap an toàn để đảm bảo tính đúng (chống gian lận).
+  - Nếu lệch nhẹ: lerp mượt về vị trí server
+  - Nếu lệch lớn: snap an toàn để đảm bảo tính đúng (chống gian lận)
 
-### Chống gian lận (Anti-cheat) mức cơ bản
+### Enemy AI System
 
-- Client không gửi toạ độ tuyệt đối; server tự tính vị trí từ input.
-- Server xác định nguồn sự thật, client chỉ hiển thị và tự hiệu chỉnh.
+- Server-side AI chạy trong `EnemyAIService`
+- Enemy đuổi theo hero trong phạm vi nhất định
+- Collision detection giữa enemies và với map objects
+- Real-time synchronization với client
 
-### UX nhỏ nhưng “có võ”
+### Anti-cheat (Cơ bản)
 
-- Remote player giữ nguyên hướng idle vừa di chuyển, tránh cảm giác “bị lật hướng” khi thả phím.
-- Xử lý lifecycle: tránh lỗi khi thoát app/đổi scene, đóng kết nối an toàn.
+- Client không gửi tọa độ tuyệt đối; server tự tính vị trí từ input
+- Server xác định nguồn sự thật, client chỉ hiển thị và tự hiệu chỉnh
+- Physics validation server-side
 
-### Những điểm tôi chú trọng khi làm dự án
+## 🎯 Tính năng đã hoàn thành
 
-- Code rõ ràng, tách lớp; đặt tên biến/hàm dễ đọc, dễ review.
-- Luồng bất đồng bộ (`async/await`) an toàn, có timeout, có log cụ thể.
-- Hạn chế side effects giữa các component, ưu tiên DI ở server.
+- ✅ **Multiplayer Real-time** với SignalR
+- ✅ **Client Prediction + Server Reconciliation**
+- ✅ **Enemy AI** với collision detection
+- ✅ **Physics System** hoàn chỉnh
+- ✅ **JWT Authentication**
+- ✅ **Session Management**
+- ✅ **Map Collision Detection**
+- ✅ **Enemy-Enemy Collision**
 
-### Roadmap ngắn hạn
+## 🚧 Roadmap
 
-- Đồng bộ bắn tên (projectile) kèm prediction nhẹ.
-- Đồng bộ animation nâng cao (combo, trạng thái trúng đòn).
-- Phòng/Phân vùng (rooms) và matchmaking cơ bản.
-- Viết test cho server (handler, hub) và smoke test automation.
+### Ngắn hạn
 
-### Tác giả & Liên hệ
+- [ ] Đồng bộ bắn tên (projectile) với prediction
+- [ ] Animation synchronization nâng cao
+- [ ] Room/Matchmaking system
+- [ ] Unit tests cho server
 
-- Tên: Phạm Hưng
-- Email: hwngt1412@gmail.com
-- LinkedIn: https://www.linkedin.com/in/h%C6%B0ng-ph%E1%BA%A1m-32741a378
-- GitHub: https://github.com/hungtun
+### Dài hạn
+
+- [ ] Multiple maps
+- [ ] Power-ups và items
+- [ ] Leaderboard system
+- [ ] Mobile support
+
+## 👨‍💻 Tác giả & Liên hệ
+
+**Phạm Hưng**
+
+- 📧 Email: hwngt1412@gmail.com
+- 💼 LinkedIn: [hung-pham-32741a378](https://www.linkedin.com/in/h%C6%B0ng-ph%E1%BA%A1m-32741a378)
+- 🐙 GitHub: [hungtun](https://github.com/hungtun)
+
+---
