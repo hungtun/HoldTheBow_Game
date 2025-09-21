@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using SharedLibrary.Requests;
 using SharedLibrary.Responses;
+using SharedLibrary.Events;
 
 namespace Hobow_Server.Hubs;
 
@@ -11,12 +12,14 @@ public class HeroHub : Hub
 {
     private readonly IHeroHandler _heroHandler;
     private readonly IMapDataHandler _mapDataHandler;
+    private readonly IArrowHandler _arrowHandler;
     private readonly ILogger<HeroHub> _logger;
 
-    public HeroHub(IHeroHandler heroHandler, IMapDataHandler mapDataHandler, ILogger<HeroHub> logger)
+    public HeroHub(IHeroHandler heroHandler, IMapDataHandler mapDataHandler, IArrowHandler arrowHandler, ILogger<HeroHub> logger)
     {
         _heroHandler = heroHandler;
         _mapDataHandler = mapDataHandler;
+        _arrowHandler = arrowHandler;
         _logger = logger;
     }
 
@@ -55,16 +58,25 @@ public class HeroHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task Move(HeroMoveRequest request)
-    {
-        var response = _heroHandler.ProcessMove(request, Context.UserIdentifier ?? Context.ConnectionId);
 
-        if (response != null)
+    /// <summary>
+    /// Handle hero movement intent event (new event-based approach)
+    /// </summary>
+    public async Task OnHeroMoveIntent(HeroMoveIntentEvent moveIntent)
+    {
+        try
         {
-            Console.WriteLine($"[Server] Player {request.HeroId} move to {request.Direction}");
-            await Clients.All.SendAsync("HeroMoved", response);
-            
-            Console.WriteLine($"[Server] Player {response.HeroId} move to {request.Direction} at ({response.X}, {response.Y})");
+            var updateEvent = _heroHandler.ProcessMoveIntent(moveIntent, Context.UserIdentifier ?? Context.ConnectionId);
+
+            if (updateEvent != null)
+            {
+                
+                await Clients.All.SendAsync("HeroMoveUpdate", updateEvent);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HeroHub] Error processing hero move intent for hero {HeroId}", moveIntent.HeroId);
         }
     }
 
@@ -125,19 +137,29 @@ public class HeroHub : Hub
         }
     }
 
-    public async Task UpdateBowState(BowStateRequest request)
+    /// <summary>
+    /// Handle bow state intent event (new event-based approach)
+    /// </summary>
+    public async Task OnBowStateIntent(BowStateIntentEvent bowStateIntent)
     {
-        Console.WriteLine($"[HeroHub] UpdateBowState hero={request.HeroId} angle={request.AngleDeg:F1} charging={request.IsCharging} charge%={request.ChargePercent:F2}");
-        var resp = new BowStateResponse
+        try
         {
-            HeroId = request.HeroId,
-            AngleDeg = request.AngleDeg,
-            IsCharging = request.IsCharging,
-            ChargePercent = request.ChargePercent,
-            ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        };
-        await Clients.Others.SendAsync("BowStateUpdated", resp);
+            var updateEvent = _heroHandler.ProcessBowStateIntent(bowStateIntent, Context.UserIdentifier ?? Context.ConnectionId);
+
+            if (updateEvent != null)
+            {
+                Console.WriteLine($"[Server] Hero {bowStateIntent.HeroId} bow state: angle={updateEvent.AngleDeg:F1} charging={updateEvent.IsCharging} charge%={updateEvent.ChargePercent:F2}");
+                
+                // Send bow state update to all other clients (not the sender)
+                await Clients.Others.SendAsync("BowStateUpdate", updateEvent);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HeroHub] Error processing bow state intent for hero {HeroId}", bowStateIntent.HeroId);
+        }
     }
+
 
     public async Task RequestMapData(MapDataRequest request)
     {
@@ -170,6 +192,36 @@ public class HeroHub : Hub
         else
         {
             await Clients.Caller.SendAsync("MapDataConfirmError", response);
+        }
+    }
+
+    /// <summary>
+    /// Handle arrow shoot intent event (new event-based approach)
+    /// </summary>
+    public async Task OnArrowShootIntent(ArrowShootIntentEvent shootIntent)
+    {
+        try
+        {
+            Console.WriteLine($"[Server] Received arrow shoot intent from hero {shootIntent.HeroId}, charge: {shootIntent.ChargePercent:F2}");
+            
+            var spawnedEvent = _arrowHandler.ProcessArrowShootIntent(shootIntent, Context.UserIdentifier ?? Context.ConnectionId);
+
+            if (spawnedEvent != null)
+            {
+                Console.WriteLine($"[Server] Hero {shootIntent.HeroId} shot arrow {spawnedEvent.ArrowId}, damage: {spawnedEvent.Damage:F1}");
+                
+                // Send arrow spawned event to all clients
+                await Clients.All.SendAsync("ArrowSpawned", spawnedEvent);
+                Console.WriteLine($"[Server] Sent ArrowSpawned event to all clients");
+            }
+            else
+            {
+                Console.WriteLine($"[Server] Failed to process arrow shoot intent for hero {shootIntent.HeroId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HeroHub] Error processing arrow shoot intent for hero {HeroId}", shootIntent.HeroId);
         }
     }
 }

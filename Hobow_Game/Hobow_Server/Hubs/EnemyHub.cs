@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Hobow_Server.Handlers;
 using SharedLibrary.Responses;
+using SharedLibrary.Events;
 
 namespace Hobow_Server.Hubs;
 
@@ -47,18 +48,27 @@ public class EnemyHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    // Client gửi request → Hub chuyển đến Handler
-    public async Task UpdateEnemyPosition(int enemyId, float x, float y)
+
+    /// <summary>
+    /// Handle enemy movement intent event (new event-based approach)
+    /// </summary>
+    public async Task OnEnemyMoveIntent(EnemyMoveIntentEvent moveIntent)
     {
         try
         {
-            // Hub chỉ chuyển request đến Handler
-            await _enemyHandler.UpdateEnemyPositionAsync(enemyId, x, y);
+            var updateEvent = _enemyHandler.ProcessEnemyMoveIntent(moveIntent);
+
+            if (updateEvent != null)
+            {
+                Console.WriteLine($"[Server] Enemy {moveIntent.EnemyId} move intent to ({updateEvent.X}, {updateEvent.Y})");
+                
+                // Send movement update to all clients
+                await Clients.All.SendAsync("EnemyMoveUpdate", updateEvent);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[EnemyHub] Failed to update enemy position");
-            await Clients.Caller.SendAsync("Error", "Failed to update enemy position");
+            _logger.LogError(ex, "[EnemyHub] Error processing enemy move intent for enemy {EnemyId}", moveIntent.EnemyId);
         }
     }
 }

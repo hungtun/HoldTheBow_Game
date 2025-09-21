@@ -1,6 +1,6 @@
 using UnityEngine;
 using Microsoft.AspNetCore.SignalR.Client;
-using SharedLibrary.Requests;
+using SharedLibrary.Events;
 using System.Reflection;
 
 public class LocalPlayerBowController : MonoBehaviour
@@ -23,20 +23,26 @@ public class LocalPlayerBowController : MonoBehaviour
 
     private float lastSendTime;
     private float sendInterval = 0.05f;
+    
+    // Optimization: track previous state to avoid sending unchanged data
+    private bool lastWasCharging = false;
+    private float lastAngle = 0f;
+    private float lastChargePercent = 0f;
 
     void Start()
     {
         animator = GetComponent<Animator>();
         localPlayer = GetComponentInParent<LocalPlayerController>();
 
-        var heroConnectionField = typeof(LocalPlayerController).GetField("connection", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var heroIdField = typeof(LocalPlayerController).GetField("heroId", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-        if (heroConnectionField != null && heroIdField != null)
+        if (localPlayer != null)
         {
-            heroConnection = (HubConnection)heroConnectionField.GetValue(localPlayer);
-            heroId = (int)heroIdField.GetValue(localPlayer);
-
+            heroConnection = localPlayer.connection;
+            heroId = localPlayer.heroId;
+            Debug.Log($"[LocalPlayerBowController] Initialized - heroConnection: {heroConnection != null}, heroId: {heroId}");
+        }
+        else
+        {
+            Debug.LogError("[LocalPlayerBowController] LocalPlayerController not found!");
         }
  
     }
@@ -57,13 +63,10 @@ public class LocalPlayerBowController : MonoBehaviour
     
     private void TryGetConnections()
     {
-        var heroConnectionField = typeof(LocalPlayerController).GetField("connection", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var heroIdField = typeof(LocalPlayerController).GetField("heroId", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-        if (heroConnectionField != null && heroIdField != null)
+        if (localPlayer != null)
         {
-            var newHeroConnection = (HubConnection)heroConnectionField.GetValue(localPlayer);
-            var newHeroId = (int)heroIdField.GetValue(localPlayer);
+            var newHeroConnection = localPlayer.connection;
+            var newHeroId = localPlayer.heroId;
 
             if (newHeroConnection != null && newHeroId > 0)
             {
@@ -90,7 +93,7 @@ public class LocalPlayerBowController : MonoBehaviour
             chargeTime = 0f;
             if (animator) animator.SetBool("isCharging", true);
             lastSendTime = 0f;
-            SendBowStateImmediate();
+            SendBowStateIntent();
         }
 
         if (isCharging && Input.GetMouseButton(0))
@@ -100,7 +103,7 @@ public class LocalPlayerBowController : MonoBehaviour
             
             if (Time.time - lastSendTime >= sendInterval)
             {
-                SendBowStateImmediate();
+                SendBowStateIntent();
             }
         }
 
@@ -112,7 +115,10 @@ public class LocalPlayerBowController : MonoBehaviour
                 animator.SetBool("isCharging", false);
                 animator.SetTrigger("shoot");
             }
-            SendStopChargingState();
+            
+            // Send final bow state and shoot arrow
+            SendBowStateIntent();
+            SendArrowShootIntent();
         }
     }
 
@@ -127,7 +133,11 @@ public class LocalPlayerBowController : MonoBehaviour
     }
 
 
-    private void SendBowStateImmediate()
+    /// <summary>
+    /// Send bow state intent event (new event-based approach)
+    /// Only sends when there's a significant change to optimize network traffic
+    /// </summary>
+    private void SendBowStateIntent()
     {
         if (heroConnection != null && heroConnection.State == HubConnectionState.Connected)
         {
@@ -137,38 +147,64 @@ public class LocalPlayerBowController : MonoBehaviour
             float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
             float chargePercent = chargeTime / maxChargeTime;
 
-            var request = new BowStateRequest
-            {
-                HeroId = heroId,
-                AngleDeg = angle,
-                IsCharging = isCharging,
-                ChargePercent = chargePercent
-            };
+            // Only send if there's a significant change
+            bool chargingChanged = (isCharging != lastWasCharging);
+            bool angleChanged = Mathf.Abs(angle - lastAngle) > 5f; // 5 degree threshold
+            bool chargeChanged = Mathf.Abs(chargePercent - lastChargePercent) > 0.05f; // 5% threshold
 
-            heroConnection.InvokeAsync("UpdateBowState", request);
-            lastSendTime = Time.time;
+            if (chargingChanged || angleChanged || chargeChanged)
+            {
+                var bowStateIntent = new BowStateIntentEvent
+                {
+                    HeroId = heroId,
+                    AngleDeg = angle,
+                    IsCharging = isCharging,
+                    ChargePercent = chargePercent,
+                    ClientTimestampMs = (long)(Time.realtimeSinceStartup * 1000f)
+                };
+
+                heroConnection.InvokeAsync("OnBowStateIntent", bowStateIntent);
+                lastSendTime = Time.time;
+                
+                // Update tracking variables
+                lastWasCharging = isCharging;
+                lastAngle = angle;
+                lastChargePercent = chargePercent;
+            }
         }
     }
 
-    private void SendStopChargingState()
+    /// <summary>
+    /// Send arrow shoot intent event to server
+    /// </summary>
+    private void SendArrowShootIntent()
     {
+        Debug.Log($"[LocalPlayerBowController] SendArrowShootIntent called - heroConnection: {heroConnection != null}, State: {heroConnection?.State}");
+        
         if (heroConnection != null && heroConnection.State == HubConnectionState.Connected)
         {
             Vector3 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             mousePos.z = 0f;
             Vector3 dir = (mousePos - transform.position).normalized;
-            float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
-            float chargePercent = chargeTime / maxChargeTime;
-
-            var request = new BowStateRequest
+            
+            var shootIntent = new ArrowShootIntentEvent
             {
                 HeroId = heroId,
-                AngleDeg = angle,
-                IsCharging = false,
-                ChargePercent = chargePercent
+                StartX = transform.position.x,
+                StartY = transform.position.y,
+                DirectionX = dir.x,
+                DirectionY = dir.y,
+                ChargePercent = chargeTime / maxChargeTime,
+                ChargeTime = chargeTime,
+                ClientTimestampMs = (long)(Time.realtimeSinceStartup * 1000f)
             };
 
-            heroConnection.InvokeAsync("UpdateBowState", request);
+            Debug.Log($"[LocalPlayerBowController] Sending arrow shoot intent - HeroId: {shootIntent.HeroId}, Charge: {shootIntent.ChargePercent:F2}");
+            heroConnection.InvokeAsync("OnArrowShootIntent", shootIntent);
+        }
+        else
+        {
+            Debug.LogWarning($"[LocalPlayerBowController] Cannot send arrow shoot intent - heroConnection: {heroConnection != null}, State: {heroConnection?.State}");
         }
     }
 }

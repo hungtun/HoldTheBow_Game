@@ -5,7 +5,7 @@ public class RemotePlayerController : MonoBehaviour
     private float interpolationSpeed = 15f;
     private float animationThreshold = 0.01f;
 
-    private Animator animator;
+    public Animator animator;
     private SpriteRenderer spriteRenderer;
 
     // State

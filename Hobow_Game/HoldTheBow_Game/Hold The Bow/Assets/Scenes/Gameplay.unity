@@ -473,6 +473,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   remotePlayerPrefab: {fileID: 5988685796448068793, guid: e0871e49b4bf642d7b07dc4c4ce6e5fa, type: 3}
   remoteContainer: {fileID: 625140755}
+  arrowPrefab: {fileID: 4995959201167108961, guid: 7ce6342d3da55407991946feec1263c5, type: 3}
 --- !u!4 &361884077
 Transform:
   m_ObjectHideFlags: 0

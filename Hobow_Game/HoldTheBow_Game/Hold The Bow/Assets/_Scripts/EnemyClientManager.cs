@@ -1,6 +1,7 @@
 using UnityEngine;
 using Microsoft.AspNetCore.SignalR.Client;
 using SharedLibrary.Responses;
+using SharedLibrary.Events;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -23,9 +24,9 @@ public class EnemyClientManager : MonoBehaviour
             .Build();
 
         _connection.On<EnemySpawnResponse>("EnemySpawned", OnEnemySpawned);
-        _connection.On<object>("EnemyPositionUpdated", OnEnemyPositionUpdated);
+        _connection.On<EnemyMoveUpdateEvent>("EnemyMoveUpdate", OnEnemyMoveUpdate);
         _connection.On<int>("EnemyRemoved", OnEnemyRemoved);
-        // _connection.On<object>("EnemyDamaged", OnEnemyDamaged);     
+        _connection.On<ArrowHitEvent>("ArrowHit", OnEnemyHit);     
         await _connection.StartAsync();
     }
 
@@ -43,8 +44,44 @@ public class EnemyClientManager : MonoBehaviour
         var obj = Instantiate(enemyPrefab, new Vector3(resp.X, resp.Y, 0f), Quaternion.identity);
         obj.name = $"Enemy_{resp.EnemyId}_{resp.EnemyName}";
 
+        // Ensure EnemyController is attached
+        var enemyController = obj.GetComponent<EnemyController>();
+        if (enemyController == null)
+        {
+            enemyController = obj.AddComponent<EnemyController>();
+            Debug.Log($"[EnemyClientManager] Added EnemyController to enemy {resp.EnemyId}");
+        }
+
         activeEnemies[resp.EnemyId] = obj;
     }
+
+    /// <summary>
+    /// Handle enemy movement update event (new event-based approach)
+    /// </summary>
+    private void OnEnemyMoveUpdate(EnemyMoveUpdateEvent updateEvent)
+    {
+        if (updateEvent.MapId != "Home") return;
+
+        if (!activeEnemies.TryGetValue(updateEvent.EnemyId, out var enemyObj))
+        {
+            // If enemy doesn't exist, create it
+            if (enemyPrefab != null)
+            {
+                enemyObj = Instantiate(enemyPrefab, new Vector3(updateEvent.X, updateEvent.Y, 0f), Quaternion.identity);
+                enemyObj.name = $"Enemy_{updateEvent.EnemyId}_{updateEvent.EnemyName}";
+                activeEnemies[updateEvent.EnemyId] = enemyObj;
+            }
+            return;
+        }
+
+        // Update enemy position
+        var logEnemyController = enemyObj.GetComponent<LogEnemyController>();
+        if (logEnemyController != null)
+        {
+            logEnemyController.SetTargetPosition(updateEvent.X, updateEvent.Y);
+        }
+    }
+
     private void ClearAllEnemies()
     {
         try
@@ -66,23 +103,6 @@ public class EnemyClientManager : MonoBehaviour
         }
     }
 
-    private void OnEnemyPositionUpdated(object data)
-    {
-        var json = data.ToString();
-        var positionData = Newtonsoft.Json.JsonConvert.DeserializeObject<EnemyPositionData>(json);
-        
-        if (!activeEnemies.TryGetValue(positionData.EnemyId, out var enemyObj))
-        {
-            Debug.LogWarning($"[EnemyClientManager] Enemy {positionData.EnemyId} not found for position update");
-            return;
-        }
-        
-        var logEnemyController = enemyObj.GetComponent<LogEnemyController>();
-        if (logEnemyController != null)
-        {
-            logEnemyController.SetTargetPosition(positionData.X, positionData.Y);
-        }
-    }
 
     private void OnEnemyRemoved(int enemyId)
     {
@@ -93,9 +113,19 @@ public class EnemyClientManager : MonoBehaviour
                 var enemyObj = activeEnemies[enemyId];
                 if (enemyObj != null)
                 {
-                    Destroy(enemyObj);
+                    var enemyController = enemyObj.GetComponent<EnemyController>();
+                    if (enemyController != null)
+                    {
+                        // Play death effect before destroying
+                        enemyController.Die();
+                    }
+                    else
+                    {
+                        Destroy(enemyObj);
+                    }
                 }
                 activeEnemies.Remove(enemyId);
+                Debug.Log($"[EnemyClientManager] Enemy {enemyId} died and removed");
             }
         }
         catch (System.Exception ex)
@@ -104,20 +134,41 @@ public class EnemyClientManager : MonoBehaviour
         }
     }
 
-    // private void OnEnemyDamaged(object data)
-    // {
-    //     var json = data.ToString();
-    //     var damageData = Newtonsoft.Json.JsonConvert.DeserializeObject<EnemyDamageData>(json);
-
-    //     int enemyId = damageData.EnemyId;
-    //     int damage = damageData.Damage;
-    //     int newHealth = damageData.NewHealth;
-
-    //     if (activeEnemies.ContainsKey(enemyId))
-    //     {
-    //         var enemyObj = activeEnemies[enemyId];
-    //     }
-    // }
+    private void OnEnemyHit(ArrowHitEvent hitEvent)
+    {
+        Debug.Log($"[EnemyClientManager] OnEnemyHit received - HitType: {hitEvent.HitType}, TargetId: {hitEvent.TargetId}, RemainingHealth: {hitEvent.RemainingHealth}");
+        
+        if (hitEvent.HitType == "Enemy" && hitEvent.TargetId.HasValue)
+        {
+            int enemyId = hitEvent.TargetId.Value;
+            
+            if (activeEnemies.ContainsKey(enemyId))
+            {
+                var enemyObj = activeEnemies[enemyId];
+                var enemyController = enemyObj.GetComponent<EnemyController>();
+                
+                Debug.Log($"[EnemyClientManager] Enemy {enemyId} found, EnemyController: {enemyController != null}");
+                
+                if (enemyController != null)
+                {
+                    // Trigger red flash effect
+                    enemyController.FlashRed();
+                    
+                    Debug.Log($"[EnemyClientManager] Enemy {enemyId} hit! Remaining health: {hitEvent.RemainingHealth}");
+                }
+                else
+                {
+                    Debug.LogError($"[EnemyClientManager] EnemyController not found on enemy {enemyId}, adding one now...");
+                    enemyController = enemyObj.AddComponent<EnemyController>();
+                    enemyController.FlashRed();
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"[EnemyClientManager] Enemy {enemyId} not found in activeEnemies");
+            }
+        }
+    }
 
     private void OnDestroy()
     {
@@ -130,11 +181,4 @@ public class EnemyDamageData
     public int EnemyId { get; set; }
     public int Damage { get; set; }
     public int NewHealth { get; set; }
-}
-
-public class EnemyPositionData
-{
-    public int EnemyId { get; set; }
-    public float X { get; set; }
-    public float Y { get; set; }
 }

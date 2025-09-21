@@ -1,5 +1,6 @@
 using SharedLibrary.Requests;
 using SharedLibrary.Responses;
+using SharedLibrary.Events;
 using Hobow_Server.Models;
 using Hobow_Server.Physics;
 using Microsoft.Xna.Framework;
@@ -13,8 +14,8 @@ namespace Hobow_Server.Handlers;
 public interface IHeroHandler
 {
     HeroSpawnResponse ProcessSpawn(HeroSpawnRequest request, string sourceId);
-
-    HeroMoveResponse ProcessMove(HeroMoveRequest request, string sourceId);
+    HeroMoveUpdateEvent ProcessMoveIntent(HeroMoveIntentEvent moveIntent, string sourceId);
+    BowStateUpdateEvent ProcessBowStateIntent(BowStateIntentEvent bowStateIntent, string sourceId);
     IEnumerable<HeroState> GetAllHeroes();
     void RemoveHero(int heroId);
     Task RemoveUserActiveHeroAsync(int userId);
@@ -97,85 +98,127 @@ public class HeroHandler : IHeroHandler
 
     #region ==== Hero Move Methods ====
 
-    public HeroMoveResponse ProcessMove(HeroMoveRequest request, string sourceId)
+
+    /// <summary>
+    /// Process hero movement intent event and return position update event
+    /// </summary>
+    public HeroMoveUpdateEvent ProcessMoveIntent(HeroMoveIntentEvent moveIntent, string sourceId)
     {
         try
         {
             var serverTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            var hero = _gameState.GetHero(request.HeroId);
+            var hero = _gameState.GetHero(moveIntent.HeroId);
             if (hero == null)
             {
-                _gameState.AddHero(request.HeroId, 0, 0, "Home");
-                hero = _gameState.GetHero(request.HeroId);
+                _gameState.AddHero(moveIntent.HeroId, 0, 0, "Home");
+                hero = _gameState.GetHero(moveIntent.HeroId);
                 if (hero == null)
                 {
-                    _logger.LogError($"[HeroHandler] Failed to auto-create hero {request.HeroId} in ProcessMove");
+                    _logger.LogError($"[HeroHandler] Failed to auto-create hero {moveIntent.HeroId} in ProcessMoveIntent");
                     return null;
                 }
             }
 
-            float moveDistance = request.Speed * 0.05f;
+            float moveDistance = moveIntent.Speed * 0.05f;
             float targetX = hero.X;
             float targetY = hero.Y;
-            switch (request.Direction.ToLower())
+            bool isMoving = !string.IsNullOrEmpty(moveIntent.Direction) && moveIntent.Speed > 0;
+
+            if (isMoving)
             {
-                case "left": targetX -= moveDistance; break;
-                case "right": targetX += moveDistance; break;
-                case "up": targetY += moveDistance; break;
-                case "down": targetY -= moveDistance; break;
+                switch (moveIntent.Direction.ToLower())
+                {
+                    case "left": targetX -= moveDistance; break;
+                    case "right": targetX += moveDistance; break;
+                    case "up": targetY += moveDistance; break;
+                    case "down": targetY -= moveDistance; break;
+                }
             }
 
             var currentPosition = new Microsoft.Xna.Framework.Vector2(hero.X, hero.Y);
             var targetPosition = new Microsoft.Xna.Framework.Vector2(targetX, targetY);
 
-            if (!_physics.HasHeroBody(request.HeroId))
+            if (!_physics.HasHeroBody(moveIntent.HeroId))
             {
-                _physics.CreateHeroBody(request.HeroId, currentPosition, hero.HeroRadius);
+                _physics.CreateHeroBody(moveIntent.HeroId, currentPosition, hero.HeroRadius);
             }
 
-            if (!_physics.IsPositionValid(targetPosition, hero.HeroRadius))
+            // Check collision and adjust position if needed
+            if (isMoving && !_physics.IsPositionValid(targetPosition, hero.HeroRadius))
             {
                 targetX = hero.X;
                 targetY = hero.Y;
+                isMoving = false;
             }
-            else
+            else if (isMoving)
             {
-                _physics.SetHeroPosition(request.HeroId, targetPosition);
+                _physics.SetHeroPosition(moveIntent.HeroId, targetPosition);
             }
 
-            if (Math.Abs(targetX - hero.X) < 0.001f && Math.Abs(targetY - hero.Y) < 0.001f)
+            // Update hero position if it changed
+            bool positionChanged = Math.Abs(targetX - hero.X) > 0.001f || Math.Abs(targetY - hero.Y) > 0.001f;
+            if (positionChanged)
             {
-                return new HeroMoveResponse
-                {
-                    HeroId = hero.Id,
-                    X = hero.X,
-                    Y = hero.Y,
-                    ServerTimestampMs = serverTimestamp
-                };
+                hero.X = targetX;
+                hero.Y = targetY;
+                _gameState.UpdateHero(hero);
             }
 
-            hero.X = targetX;
-            hero.Y = targetY;
-
-            _gameState.UpdateHero(hero);
-
-            return new HeroMoveResponse
+            return new HeroMoveUpdateEvent
             {
                 HeroId = hero.Id,
                 X = hero.X,
                 Y = hero.Y,
-                ServerTimestampMs = serverTimestamp
+                ServerTimestampMs = serverTimestamp,
+                Direction = moveIntent.Direction,
+                IsMoving = isMoving
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[HeroHandler] Error in ProcessMove for hero {HeroId}", request.HeroId);
+            _logger.LogError(ex, "[HeroHandler] Error in ProcessMoveIntent for hero {HeroId}", moveIntent.HeroId);
             return null;
         }
-
-
     }
+
+    /// <summary>
+    /// Process bow state intent event and return bow state update event
+    /// </summary>
+    public BowStateUpdateEvent ProcessBowStateIntent(BowStateIntentEvent bowStateIntent, string sourceId)
+    {
+        try
+        {
+            var serverTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            var hero = _gameState.GetHero(bowStateIntent.HeroId);
+            if (hero == null)
+            {
+                _logger.LogWarning($"[HeroHandler] Hero {bowStateIntent.HeroId} not found in ProcessBowStateIntent");
+                return null;
+            }
+
+            // Validate bow state data
+            var validatedAngle = Math.Clamp(bowStateIntent.AngleDeg, -180f, 180f);
+            var validatedChargePercent = Math.Clamp(bowStateIntent.ChargePercent, 0f, 1f);
+
+            return new BowStateUpdateEvent
+            {
+                HeroId = bowStateIntent.HeroId,
+                AngleDeg = validatedAngle,
+                IsCharging = bowStateIntent.IsCharging,
+                ChargePercent = validatedChargePercent,
+                ServerTimestampMs = serverTimestamp,
+                Action = bowStateIntent.IsCharging ? "Update" : "Stop"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HeroHandler] Error in ProcessBowStateIntent for hero {HeroId}", bowStateIntent.HeroId);
+            return null;
+        }
+    }
+
     public async Task<HeroResponse?> SelectHeroAsync(int heroId, int userId, string connectionId)
     {
         try

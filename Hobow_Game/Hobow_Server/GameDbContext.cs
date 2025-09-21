@@ -17,7 +17,7 @@ public class GameDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-        modelBuilder.Entity<Hero>().ToTable("Hero");
+        modelBuilder.Entity<Hero>().ToTable("Heroes");
         modelBuilder.Entity<User>().ToTable("Users");
         modelBuilder.Entity<EnemyDefinition>().ToTable("EnemyDefinitions");
         modelBuilder.Entity<EnemySpawnPoint>().ToTable("EnemySpawnPoints");

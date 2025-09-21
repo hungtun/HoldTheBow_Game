@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR.Client;
 using SharedLibrary.Requests;
 using SharedLibrary.Responses;
+using SharedLibrary.Events;
 
 public class LocalPlayerController : MonoBehaviour
 {
@@ -20,16 +21,23 @@ public class LocalPlayerController : MonoBehaviour
     private MapDataManager mapDataManager;
     private EnemyClientManager enemyClientManager;
     private float heroRadius = 0.25f;
+    
+    [Header("Arrow Settings")]
+    public GameObject arrowPrefab; // Gán Arrow prefab trong Inspector
 
-    private HubConnection connection;
+    public HubConnection connection;
+    
+    // Arrow event queues for main thread processing
+    private System.Collections.Generic.Queue<ArrowSpawnedEvent> arrowSpawnedQueue = new System.Collections.Generic.Queue<ArrowSpawnedEvent>();
+    private System.Collections.Generic.Queue<ArrowHitEvent> arrowHitQueue = new System.Collections.Generic.Queue<ArrowHitEvent>();
+    private System.Collections.Generic.Queue<ArrowRemovedEvent> arrowRemovedQueue = new System.Collections.Generic.Queue<ArrowRemovedEvent>();
     private string serverBaseUrl;
     private string jwtToken;
-    private int heroId;
+    public int heroId;
     private float lastSendMs;
     private Vector3 change;
     private Vector3 moveDirection;
     private string lastDirection = "";
-    private string lastSentDirection = "";
     private bool isMoving = false;
     private bool lastWasMoving = false;
     private float inputStartMs = 0f;
@@ -71,6 +79,31 @@ public class LocalPlayerController : MonoBehaviour
     {
         HandleInput();
         UpdateAnimation();
+        ProcessArrowEvents();
+    }
+    
+    private void ProcessArrowEvents()
+    {
+        // Process arrow spawned events
+        while (arrowSpawnedQueue.Count > 0)
+        {
+            var spawnedEvent = arrowSpawnedQueue.Dequeue();
+            ProcessArrowSpawned(spawnedEvent);
+        }
+        
+        // Process arrow hit events
+        while (arrowHitQueue.Count > 0)
+        {
+            var hitEvent = arrowHitQueue.Dequeue();
+            ProcessArrowHit(hitEvent);
+        }
+        
+        // Process arrow removed events
+        while (arrowRemovedQueue.Count > 0)
+        {
+            var removedEvent = arrowRemovedQueue.Dequeue();
+            ProcessArrowRemoved(removedEvent);
+        }
     }
 
     private void FixedUpdate()
@@ -94,10 +127,13 @@ public class LocalPlayerController : MonoBehaviour
                 .WithAutomaticReconnect()
                 .Build();
 
-            connection.On<HeroMoveResponse>("HeroMoved", OnServerPositionUpdate);
+            connection.On<HeroMoveUpdateEvent>("HeroMoveUpdate", OnHeroMoveUpdate);
             connection.On<HeroSpawnResponse>("HeroSpawned", OnServerSpawnUpdate);
             connection.On<int>("HeroRemoved", OnHeroRemoved);
             connection.On<string>("Kicked", OnKicked);
+            connection.On<ArrowSpawnedEvent>("ArrowSpawned", OnArrowSpawned);
+            connection.On<ArrowHitEvent>("ArrowHit", OnArrowHit);
+            connection.On<ArrowRemovedEvent>("ArrowRemoved", OnArrowRemoved);
 
             await connection.StartAsync();
 
@@ -167,8 +203,7 @@ public class LocalPlayerController : MonoBehaviour
         {
             inputStartMs = NowMs();
 
-            lastSentDirection = "";
-            _ = SendMoveToServerImmediate(newDirection);
+            _ = SendMoveIntentToServer();
         }
 
         lastWasMoving = isMoving;
@@ -213,52 +248,34 @@ public class LocalPlayerController : MonoBehaviour
         if (nowMs - lastSendMs >= sendIntervalMs)
         {
             lastSendMs = nowMs;
-            _ = SendMoveToServer();
+            // Use new event-based approach instead of request/response
+            _ = SendMoveIntentToServer();
         }
     }
 
-    private async Task SendMoveToServerImmediate(string direction)
+
+    /// <summary>
+    /// Send hero movement intent event (new event-based approach)
+    /// </summary>
+    private async Task SendMoveIntentToServer()
     {
         if (connection?.State != HubConnectionState.Connected) return;
-        try
-        {
-
-            if (direction == lastSentDirection) return;
-            lastSentDirection = direction;
-
-            var request = new HeroMoveRequest
-            {
-                HeroId = heroId,
-                Direction = direction,
-                Speed = moveSpeed
-            };
-            await connection.InvokeAsync("Move", request);
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"[LocalPlayerController] Send immediate move failed: {ex.Message}");
-        }
-    }
-
-    private async Task SendMoveToServer()
-    {
-        if (connection?.State != HubConnectionState.Connected) return;
-        if (!isMoving) return;
 
         try
         {
-            var request = new HeroMoveRequest
+            var moveIntent = new HeroMoveIntentEvent
             {
                 HeroId = heroId,
-                Direction = lastDirection,
-                Speed = moveSpeed
+                Direction = isMoving ? lastDirection : "",
+                Speed = isMoving ? moveSpeed : 0f,
+                ClientTimestampMs = (long)(Time.realtimeSinceStartup * 1000f)
             };
 
-            await connection.InvokeAsync("Move", request);
+            await connection.InvokeAsync("OnHeroMoveIntent", moveIntent);
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"[LocalPlayerController] Send move failed: {ex.Message}");
+            Debug.LogWarning($"[LocalPlayerController] Send move intent failed: {ex.Message}");
         }
     }
 
@@ -298,27 +315,42 @@ public class LocalPlayerController : MonoBehaviour
         }
     }
 
-    private void OnServerPositionUpdate(HeroMoveResponse response)
+
+    /// <summary>
+    /// Handle hero movement update event (new event-based approach)
+    /// </summary>
+    private void OnHeroMoveUpdate(HeroMoveUpdateEvent updateEvent)
     {
-        if (response.HeroId == heroId)
+        if (updateEvent.HeroId == heroId)
         {
-            Vector3 serverPosition = new Vector3(response.X, response.Y, 0f);
+            Vector3 serverPosition = new Vector3(updateEvent.X, updateEvent.Y, 0f);
             Vector3 localPosition = transform.position;
 
             float distance = Vector3.Distance(serverPosition, localPosition);
 
+            // Hard snap if position is too far off
             if (distance >= reconciliationHardSnapThreshold)
             {
-
                 rb.position = serverPosition;
                 return;
             }
 
+            // Smooth reconciliation if position is slightly off
             if (distance > reconciliationThreshold)
             {
-
                 Vector3 smoothPos = Vector3.Lerp(localPosition, serverPosition, serverLerpFactor);
                 rb.position = smoothPos;
+            }
+
+            // Update animation based on movement state
+            if (animator != null)
+            {
+                animator.SetBool("isMoving", updateEvent.IsMoving);
+                if (updateEvent.IsMoving && !string.IsNullOrEmpty(updateEvent.Direction))
+                {
+                    animator.SetFloat("moveX", updateEvent.Direction == "left" ? -1f : updateEvent.Direction == "right" ? 1f : 0f);
+                    animator.SetFloat("moveY", updateEvent.Direction == "up" ? 1f : updateEvent.Direction == "down" ? -1f : 0f);
+                }
             }
         }
     }
@@ -404,6 +436,105 @@ public class LocalPlayerController : MonoBehaviour
         Session.SelectedHeroId = 0;
 
         UnityEngine.SceneManagement.SceneManager.LoadScene("LoginScene");
+    }
+
+    /// <summary>
+    /// Handle arrow spawned event (for local player's own arrows)
+    /// </summary>
+    private void OnArrowSpawned(ArrowSpawnedEvent spawnedEvent)
+    {
+        Debug.Log($"[LocalPlayerController] OnArrowSpawned received - ArrowId: {spawnedEvent.ArrowId}, HeroId: {spawnedEvent.HeroId}");
+        
+        // Enqueue for main thread processing
+        arrowSpawnedQueue.Enqueue(spawnedEvent);
+    }
+    
+    private void ProcessArrowSpawned(ArrowSpawnedEvent spawnedEvent)
+    {
+        try
+        {
+            Debug.Log($"[LocalPlayerController] Processing arrow spawned - ArrowId: {spawnedEvent.ArrowId}, arrowPrefab: {arrowPrefab != null}");
+            
+            if (arrowPrefab != null)
+            {
+                Debug.Log($"[LocalPlayerController] Instantiating arrow at position ({spawnedEvent.StartX}, {spawnedEvent.StartY})");
+                
+                // Calculate rotation based on arrow direction
+                Vector2 direction = new Vector2(spawnedEvent.DirectionX, spawnedEvent.DirectionY);
+                float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg; // Subtract 90 degrees to correct orientation
+                Quaternion rotation = Quaternion.AngleAxis(angle, Vector3.forward);
+                
+                var arrowObj = Instantiate(arrowPrefab, new Vector3(spawnedEvent.StartX, spawnedEvent.StartY, 0f), rotation);
+                arrowObj.name = $"Arrow_{spawnedEvent.ArrowId}";
+                Debug.Log($"[LocalPlayerController] Arrow object created: {arrowObj.name} with rotation: {angle}°");
+                
+                var arrowController = arrowObj.GetComponent<ArrowController>();
+                if (arrowController != null)
+                {
+                    Debug.Log($"[LocalPlayerController] Initializing ArrowController for arrow {spawnedEvent.ArrowId}");
+                    arrowController.Initialize(spawnedEvent);
+                    Debug.Log($"[LocalPlayerController] Arrow {spawnedEvent.ArrowId} created and initialized successfully");
+                }
+                else
+                {
+                    Debug.LogError($"[LocalPlayerController] ArrowController component not found on arrow prefab!");
+                }
+            }
+            else
+            {
+                Debug.LogWarning("[LocalPlayerController] Arrow prefab is not assigned!");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[LocalPlayerController] Error in ProcessArrowSpawned: {ex.Message}\n{ex.StackTrace}");
+        }
+    }
+
+    /// <summary>
+    /// Handle arrow hit event
+    /// </summary>
+    private void OnArrowHit(ArrowHitEvent hitEvent)
+    {
+        Debug.Log($"[LocalPlayerController] OnArrowHit received - ArrowId: {hitEvent.ArrowId}");
+        
+        // Enqueue for main thread processing
+        arrowHitQueue.Enqueue(hitEvent);
+    }
+    
+    private void ProcessArrowHit(ArrowHitEvent hitEvent)
+    {
+        var arrowObj = GameObject.Find($"Arrow_{hitEvent.ArrowId}");
+        if (arrowObj != null)
+        {
+            var arrowController = arrowObj.GetComponent<ArrowController>();
+            if (arrowController != null)
+            {
+                arrowController.HandleHit(hitEvent);
+                Debug.Log($"[LocalPlayerController] Arrow {hitEvent.ArrowId} hit handled");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Handle arrow removed event
+    /// </summary>
+    private void OnArrowRemoved(ArrowRemovedEvent removedEvent)
+    {
+        Debug.Log($"[LocalPlayerController] OnArrowRemoved received - ArrowId: {removedEvent.ArrowId}");
+        
+        // Enqueue for main thread processing
+        arrowRemovedQueue.Enqueue(removedEvent);
+    }
+    
+    private void ProcessArrowRemoved(ArrowRemovedEvent removedEvent)
+    {
+        var arrowObj = GameObject.Find($"Arrow_{removedEvent.ArrowId}");
+        if (arrowObj != null)
+        {
+            Destroy(arrowObj);
+            Debug.Log($"[LocalPlayerController] Arrow {removedEvent.ArrowId} destroyed");
+        }
     }
 
     private void OnDestroy()

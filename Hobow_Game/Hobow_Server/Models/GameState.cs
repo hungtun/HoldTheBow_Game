@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading;
+using SharedLibrary.DataModels;
 
 namespace Hobow_Server.Models;
 
@@ -7,7 +8,9 @@ public class GameState
 {
     private readonly ConcurrentDictionary<int, HeroState> _heroes = new();
     private readonly ConcurrentDictionary<int, EnemyState> _enemies = new();
+    private readonly ConcurrentDictionary<int, Arrow> _arrows = new();
     private int _nextEnemyId = 0;
+    private int _nextArrowId = 0;
 
     public GameState()
     {
@@ -102,7 +105,9 @@ public class GameState
         return enemy;
     }
 
-    public IEnumerable<EnemyState> GetAllEnemies() => _enemies.Values;
+    public IEnumerable<EnemyState> GetAllEnemies() => _enemies.Values.Where(e => e.IsActive);
+    
+    public IEnumerable<EnemyState> GetAllEnemiesIncludingDisabled() => _enemies.Values;
 
     public void UpdateEnemyHealth(int enemyId, int newHealth)
     {
@@ -125,6 +130,72 @@ public class GameState
     {
         _enemies.Clear();
         _nextEnemyId = 0;
+    }
+
+    #endregion
+
+    #region ==== Arrow Management ====
+
+    public int SpawnArrow(int heroId, float x, float y, float directionX, float directionY, float speed, float damage, float accuracy)
+    {
+        var id = Interlocked.Increment(ref _nextArrowId);
+
+        var arrow = new Arrow
+        {
+            ArrowId = id,
+            HeroId = heroId,
+            X = x,
+            Y = y,
+            DirectionX = directionX,
+            DirectionY = directionY,
+            Speed = speed,
+            Damage = damage,
+            Accuracy = accuracy,
+            IsActive = true,
+            IsStuck = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _arrows.TryAdd(id, arrow);
+
+        Console.WriteLine($"[GameState] Spawned arrow {id} by hero {heroId} at ({x},{y})");
+
+        return id;
+    }
+
+    public void UpdateArrowPosition(int arrowId, float x, float y)
+    {
+        if (_arrows.TryGetValue(arrowId, out var arrow))
+        {
+            arrow.X = x;
+            arrow.Y = y;
+        }
+    }
+
+    public void StickArrow(int arrowId, string targetType, int? targetId, float x, float y)
+    {
+        if (_arrows.TryGetValue(arrowId, out var arrow))
+        {
+            arrow.X = x;
+            arrow.Y = y;
+            arrow.IsStuck = true;
+            arrow.StuckTargetType = targetType;
+            arrow.StuckTargetId = targetId;
+            arrow.RemoveAt = DateTime.UtcNow.AddSeconds(5); // Remove after 5 seconds
+        }
+    }
+
+    public Arrow? GetArrow(int arrowId)
+    {
+        _arrows.TryGetValue(arrowId, out var arrow);
+        return arrow;
+    }
+
+    public IEnumerable<Arrow> GetAllArrows() => _arrows.Values;
+
+    public void RemoveArrow(int arrowId)
+    {
+        _arrows.TryRemove(arrowId, out _);
     }
 
     #endregion

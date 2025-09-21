@@ -8,6 +8,7 @@ using Hobow_Server;
 using Hobow_Server.Physics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Newtonsoft.Json;
 
@@ -32,12 +33,22 @@ builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IEnemyService, EnemyService>();
 builder.Services.AddScoped<IEnemyHandler, EnemyHandler>();
 builder.Services.AddHostedService<EnemyAIService>();
+builder.Services.AddHostedService<ArrowUpdateService>();
 builder.Services.AddSingleton<GameState>();
 
 builder.Services.AddSingleton<ServerPhysicsManager>();
 builder.Services.AddSingleton<TiledMapParser>();
 
 builder.Services.AddScoped<IHeroHandler, HeroHandler>();
+builder.Services.AddScoped<IArrowHandler>(provider =>
+{
+    var gameState = provider.GetRequiredService<GameState>();
+    var heroHub = provider.GetRequiredService<IHubContext<HeroHub>>();
+    var enemyHub = provider.GetRequiredService<IHubContext<EnemyHub>>();
+    var logger = provider.GetRequiredService<ILogger<ArrowHandler>>();
+    var physics = provider.GetRequiredService<ServerPhysicsManager>();
+    return new ArrowHandler(gameState, heroHub, enemyHub, logger, physics);
+});
 builder.Services.AddSingleton<IMapDataHandler, MapDataHandler>();
 builder.Services.AddSignalR();
 
