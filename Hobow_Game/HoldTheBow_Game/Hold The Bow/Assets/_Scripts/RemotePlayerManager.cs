@@ -11,14 +11,14 @@ public class RemotePlayerManager : MonoBehaviour
     [SerializeField] private Transform remoteContainer;
     
     [Header("Arrow Settings")]
-    public GameObject arrowPrefab; // Gán Arrow prefab trong Inspector
+    public GameObject arrowPrefab;
 
     private HubConnection connection;
     
-    // Arrow event queues for main thread processing
     private System.Collections.Generic.Queue<ArrowSpawnedEvent> arrowSpawnedQueue = new System.Collections.Generic.Queue<ArrowSpawnedEvent>();
     private System.Collections.Generic.Queue<ArrowHitEvent> arrowHitQueue = new System.Collections.Generic.Queue<ArrowHitEvent>();
-    private System.Collections.Generic.Queue<ArrowRemovedEvent> arrowRemovedQueue = new System.Collections.Generic.Queue<ArrowRemovedEvent>();
+    private Queue<ArrowRemovedEvent> arrowRemovedQueue = new System.Collections.Generic.Queue<ArrowRemovedEvent>();
+    private Queue<HeroDamagedEvent> heroDamagedQueue = new System.Collections.Generic.Queue<HeroDamagedEvent>();
     private int localHeroId;
 
     private readonly Dictionary<int, RemotePlayerController> remotePlayers
@@ -27,25 +27,23 @@ public class RemotePlayerManager : MonoBehaviour
     void Update()
     {
         ProcessArrowEvents();
+        ProcessHeroDamagedEvents();
     }
     
     private void ProcessArrowEvents()
     {
-        // Process arrow spawned events
         while (arrowSpawnedQueue.Count > 0)
         {
             var spawnedEvent = arrowSpawnedQueue.Dequeue();
             ProcessArrowSpawned(spawnedEvent);
         }
         
-        // Process arrow hit events
         while (arrowHitQueue.Count > 0)
         {
             var hitEvent = arrowHitQueue.Dequeue();
             ProcessArrowHit(hitEvent);
         }
         
-        // Process arrow removed events
         while (arrowRemovedQueue.Count > 0)
         {
             var removedEvent = arrowRemovedQueue.Dequeue();
@@ -72,6 +70,7 @@ public class RemotePlayerManager : MonoBehaviour
         connection.On<ArrowSpawnedEvent>("ArrowSpawned", OnArrowSpawned);
         connection.On<ArrowHitEvent>("ArrowHit", OnArrowHit);
         connection.On<ArrowRemovedEvent>("ArrowRemoved", OnArrowRemoved);
+        connection.On<HeroDamagedEvent>("HeroDamaged", OnHeroDamaged);
 
         _ = RequestCurrentPlayersSafe();
     }
@@ -107,11 +106,7 @@ public class RemotePlayerManager : MonoBehaviour
             Debug.LogWarning($"[RemotePlayerManager] Request current players failed: {ex.Message}");
         }
     }
-
-
-    /// <summary>
-    /// Handle hero movement update event for remote players (new event-based approach)
-    /// </summary>
+    
     private void OnRemotePlayerMoveUpdate(HeroMoveUpdateEvent updateEvent)
     {
         if (updateEvent.HeroId == localHeroId) return;
@@ -124,8 +119,7 @@ public class RemotePlayerManager : MonoBehaviour
 
         Vector3 newPosition = new Vector3(updateEvent.X, updateEvent.Y, 0f);
         remotePlayer.UpdatePosition(newPosition);
-        
-        // Update animation based on movement state
+
         if (remotePlayer.animator != null)
         {
             remotePlayer.animator.SetBool("isMoving", updateEvent.IsMoving);
@@ -140,10 +134,15 @@ public class RemotePlayerManager : MonoBehaviour
     private void OnRemotePlayerSpawned(HeroSpawnResponse response)
     {
         if (response.HeroId == localHeroId) return;
-
         if (remotePlayers.ContainsKey(response.HeroId)) return; 
 
-        CreateRemotePlayer(response.HeroId, new Vector3(response.X, response.Y, 0f));
+        var remotePlayer = CreateRemotePlayer(response.HeroId, new Vector3(response.X, response.Y, 0f));
+        if(remotePlayer != null)
+        {
+            int maxHp = response.MaxHealth > 0 ? response.MaxHealth : 100;
+            int CurrentHp = response.CurrentHealth > 0 ? response.CurrentHealth : maxHp;
+            remotePlayer.Initialize(response.HeroId, maxHp, CurrentHp);
+        }
     }
 
     private void OnRemotePlayerLoggedOut(int heroId)
@@ -151,9 +150,6 @@ public class RemotePlayerManager : MonoBehaviour
         RemoveRemotePlayer(heroId);
     }
 
-    /// <summary>
-    /// Handle bow state update event for remote players (new event-based approach)
-    /// </summary>
     private void OnBowStateUpdate(BowStateUpdateEvent updateEvent)
     {
         if (updateEvent.HeroId == localHeroId) return;
@@ -185,7 +181,6 @@ public class RemotePlayerManager : MonoBehaviour
         {
             if (remotePlayerPrefab == null)
             {
-                Debug.LogError("[RemotePlayerManager] remotePlayerPrefab is null");
                 return null;
             }
 
@@ -195,14 +190,12 @@ public class RemotePlayerManager : MonoBehaviour
 
             if (remotePlayerObj == null)
             {
-                Debug.LogError("[RemotePlayerManager] Failed to instantiate remotePlayerPrefab");
                 return null;
             }
 
             var remotePlayer = remotePlayerObj.GetComponent<RemotePlayerController>();
             if (remotePlayer == null)
             {
-                Debug.LogError("[RemotePlayerManager] RemotePlayerController component not found on prefab");
                 if (remotePlayerObj != null)
                 {
                     Destroy(remotePlayerObj);
@@ -210,7 +203,6 @@ public class RemotePlayerManager : MonoBehaviour
                 return null;
             }
 
-            remotePlayer.Initialize(playerId);
             remotePlayers[playerId] = remotePlayer;
 
             return remotePlayer;
@@ -260,14 +252,11 @@ public class RemotePlayerManager : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Handle arrow spawned event
-    /// </summary>
+
     private void OnArrowSpawned(ArrowSpawnedEvent spawnedEvent)
     {
         Debug.Log($"[RemotePlayerManager] OnArrowSpawned received - ArrowId: {spawnedEvent.ArrowId}, HeroId: {spawnedEvent.HeroId}");
         
-        // Enqueue for main thread processing
         arrowSpawnedQueue.Enqueue(spawnedEvent);
     }
     
@@ -275,19 +264,14 @@ public class RemotePlayerManager : MonoBehaviour
     {
         if (arrowPrefab != null)
         {
-            // Calculate rotation based on arrow direction
-            Vector2 direction = new Vector2(spawnedEvent.DirectionX, spawnedEvent.DirectionY);
-            float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg; // Subtract 90 degrees to correct orientation
-            Quaternion rotation = Quaternion.AngleAxis(angle, Vector3.forward);
-            
-            var arrowObj = Instantiate(arrowPrefab, new Vector3(spawnedEvent.StartX, spawnedEvent.StartY, 0f), rotation);
+            var arrowObj = Instantiate(arrowPrefab, new Vector3(spawnedEvent.StartX, spawnedEvent.StartY, 0f), Quaternion.identity);
+
             arrowObj.name = $"Arrow_{spawnedEvent.ArrowId}";
             
             var arrowController = arrowObj.GetComponent<ArrowController>();
             if (arrowController != null)
             {
                 arrowController.Initialize(spawnedEvent);
-                Debug.Log($"[RemotePlayerManager] Arrow {spawnedEvent.ArrowId} created and initialized with rotation: {angle}°");
             }
         }
         else
@@ -296,14 +280,11 @@ public class RemotePlayerManager : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Handle arrow hit event
-    /// </summary>
+
     private void OnArrowHit(ArrowHitEvent hitEvent)
     {
         Debug.Log($"[RemotePlayerManager] OnArrowHit received - ArrowId: {hitEvent.ArrowId}");
         
-        // Enqueue for main thread processing
         arrowHitQueue.Enqueue(hitEvent);
     }
     
@@ -321,14 +302,10 @@ public class RemotePlayerManager : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Handle arrow removed event
-    /// </summary>
     private void OnArrowRemoved(ArrowRemovedEvent removedEvent)
     {
         Debug.Log($"[RemotePlayerManager] OnArrowRemoved received - ArrowId: {removedEvent.ArrowId}");
         
-        // Enqueue for main thread processing
         arrowRemovedQueue.Enqueue(removedEvent);
     }
     
@@ -341,6 +318,40 @@ public class RemotePlayerManager : MonoBehaviour
             Debug.Log($"[RemotePlayerManager] Arrow {removedEvent.ArrowId} destroyed");
         }
     }
+
+  private void OnHeroDamaged(HeroDamagedEvent e)
+  {
+    heroDamagedQueue.Enqueue(e);
+  }
+
+  private void ProcessHeroDamagedEvents()
+  {
+    while (heroDamagedQueue.Count > 0)
+    {
+      var e = heroDamagedQueue.Dequeue();
+      if (!remotePlayers.TryGetValue(e.HeroId, out var remote)) continue;
+
+      var hb = remote.GetComponentInChildren<HealthBar>(true);
+      if (hb != null)
+      {
+        hb.SetHealth(Mathf.Max(0, e.NewHealth));
+      }
+
+      var sr = remote.GetComponent<SpriteRenderer>();
+      if (sr != null)
+      {
+        StartCoroutine(FlashRemote(sr));
+      }
+    }
+  }
+
+  private System.Collections.IEnumerator FlashRemote(SpriteRenderer sr)
+  {
+    var original = sr.color;
+    sr.color = Color.red;
+    yield return new WaitForSeconds(0.2f);
+    sr.color = original;
+  }
 
     private void OnDestroy()
     {

@@ -126,13 +126,11 @@ public class MapDataManager : MonoBehaviour
 
     public void ClearCollisionObjects()
     {
-        // Duyệt bản sao để tránh thay đổi collection khi đang iterate
         var snapshot = new List<GameObject>(createdCollisionObjects);
         foreach (var obj in snapshot)
         {
             if (obj != null)
             {
-                // Tránh dùng DestroyImmediate trong runtime vì có thể gây crash trên build
                 Destroy(obj);
             }
         }

@@ -31,7 +31,16 @@ builder.Services.AddControllers().AddNewtonsoftJson(o =>
 builder.Services.AddScoped<IHeroService, HeroService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IEnemyService, EnemyService>();
-builder.Services.AddScoped<IEnemyHandler, EnemyHandler>();
+builder.Services.AddScoped<IEnemyHandler>(provider =>
+{
+    var enemyService = provider.GetRequiredService<Hobow_Server.Services.IEnemyService>();
+    var gameState = provider.GetRequiredService<GameState>();
+    var enemyHub = provider.GetRequiredService<IHubContext<EnemyHub>>();
+    var heroHub = provider.GetRequiredService<IHubContext<HeroHub>>();
+    var logger = provider.GetRequiredService<ILogger<EnemyHandler>>();
+    var physics = provider.GetRequiredService<ServerPhysicsManager>();
+    return new EnemyHandler(enemyService, gameState, enemyHub, heroHub, logger, physics);
+});
 builder.Services.AddHostedService<EnemyAIService>();
 builder.Services.AddHostedService<ArrowUpdateService>();
 builder.Services.AddSingleton<GameState>();
@@ -40,6 +49,7 @@ builder.Services.AddSingleton<ServerPhysicsManager>();
 builder.Services.AddSingleton<TiledMapParser>();
 
 builder.Services.AddScoped<IHeroHandler, HeroHandler>();
+builder.Services.AddScoped<Hobow_Server.Services.IHeroService, Hobow_Server.Services.HeroService>();
 builder.Services.AddScoped<IArrowHandler>(provider =>
 {
     var gameState = provider.GetRequiredService<GameState>();
@@ -47,7 +57,8 @@ builder.Services.AddScoped<IArrowHandler>(provider =>
     var enemyHub = provider.GetRequiredService<IHubContext<EnemyHub>>();
     var logger = provider.GetRequiredService<ILogger<ArrowHandler>>();
     var physics = provider.GetRequiredService<ServerPhysicsManager>();
-    return new ArrowHandler(gameState, heroHub, enemyHub, logger, physics);
+    var heroService = provider.GetRequiredService<Hobow_Server.Services.IHeroService>();
+    return new ArrowHandler(gameState, heroHub, enemyHub, logger, physics, heroService);
 });
 builder.Services.AddSingleton<IMapDataHandler, MapDataHandler>();
 builder.Services.AddSignalR();

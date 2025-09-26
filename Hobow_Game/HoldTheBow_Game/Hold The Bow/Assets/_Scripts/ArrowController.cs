@@ -51,9 +51,7 @@ public class ArrowController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Initialize arrow with data from server
-    /// </summary>
+  
     public void Initialize(ArrowSpawnedEvent spawnedEvent)
     {
         arrowId = spawnedEvent.ArrowId;
@@ -64,40 +62,31 @@ public class ArrowController : MonoBehaviour
         
         direction = new Vector3(spawnedEvent.DirectionX, spawnedEvent.DirectionY, 0f).normalized;
         
-        // Position arrow at spawn location
         transform.position = new Vector3(spawnedEvent.StartX, spawnedEvent.StartY, 0f);
         
-        // Rotate arrow to face direction
-        float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
-        transform.rotation = Quaternion.AngleAxis(angle, Vector3.forward);
+        float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
+        transform.rotation = Quaternion.AngleAxis(angle + 90f, Vector3.forward);
     }
 
-    /// <summary>
-    /// Handle arrow hit event from server
-    /// </summary>
     public void HandleHit(ArrowHitEvent hitEvent)
     {
         if (hitEvent.ArrowId != arrowId) return;
         
         isStuck = true;
         
-        // Stop movement
         if (rb != null)
         {
             rb.velocity = Vector2.zero;
             rb.isKinematic = true;
         }
         
-        // Disable collision
         if (arrowCollider != null)
         {
             arrowCollider.enabled = false;
         }
         
-        // Position at hit location
         transform.position = new Vector3(hitEvent.HitX, hitEvent.HitY, 0f);
         
-        // Handle different hit types
         switch (hitEvent.HitType)
         {
             case "Wall":
@@ -114,16 +103,13 @@ public class ArrowController : MonoBehaviour
 
     private void HandleWallHit()
     {
-        // Arrow sticks to wall - no special effects needed
         Debug.Log($"Arrow {arrowId} stuck to wall at {transform.position}");
     }
 
     private void HandleEnemyHit(ArrowHitEvent hitEvent)
     {
-        // Arrow sticks to enemy
         Debug.Log($"Arrow {arrowId} hit enemy {hitEvent.TargetId}, damage: {hitEvent.Damage}, remaining health: {hitEvent.RemainingHealth}");
         
-        // Try to parent to enemy if it exists
         if (hitEvent.TargetId.HasValue)
         {
             var enemyObj = GameObject.Find($"Enemy_{hitEvent.TargetId}");
@@ -136,10 +122,8 @@ public class ArrowController : MonoBehaviour
 
     private void HandleHeroHit(ArrowHitEvent hitEvent)
     {
-        // Arrow sticks to hero
         Debug.Log($"Arrow {arrowId} hit hero {hitEvent.TargetId}, damage: {hitEvent.Damage}");
         
-        // Try to parent to hero if it exists
         if (hitEvent.TargetId.HasValue)
         {
             var heroObj = GameObject.Find($"Hero_{hitEvent.TargetId}");
@@ -152,19 +136,15 @@ public class ArrowController : MonoBehaviour
 
     void OnTriggerEnter2D(Collider2D other)
     {
-        // Only handle collision if not stuck
         if (isStuck) return;
         
-        // Don't hit the shooter
         if (other.CompareTag("Player") && other.GetComponent<LocalPlayerController>()?.heroId == heroId)
         {
             return;
         }
         
-        // Handle collision with walls, enemies, or other players
         if (other.CompareTag("Wall") || other.CompareTag("Enemy") || other.CompareTag("Player"))
         {
-            // Stop the arrow (server will handle the actual hit logic)
             if (rb != null)
             {
                 rb.velocity = Vector2.zero;

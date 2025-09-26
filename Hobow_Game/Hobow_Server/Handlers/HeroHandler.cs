@@ -13,9 +13,9 @@ namespace Hobow_Server.Handlers;
 
 public interface IHeroHandler
 {
-    HeroSpawnResponse ProcessSpawn(HeroSpawnRequest request, string sourceId);
-    HeroMoveUpdateEvent ProcessMoveIntent(HeroMoveIntentEvent moveIntent, string sourceId);
-    BowStateUpdateEvent ProcessBowStateIntent(BowStateIntentEvent bowStateIntent, string sourceId);
+    HeroSpawnResponse ProcessSpawn(HeroSpawnRequest request);
+    HeroMoveUpdateEvent ProcessMoveIntent(HeroMoveIntentEvent moveIntent);
+    BowStateUpdateEvent ProcessBowStateIntent(BowStateIntentEvent bowStateIntent);
     IEnumerable<HeroState> GetAllHeroes();
     void RemoveHero(int heroId);
     Task RemoveUserActiveHeroAsync(int userId);
@@ -40,7 +40,7 @@ public class HeroHandler : IHeroHandler
 
     #region ==== Hero Spawn Methods ====
 
-    public HeroSpawnResponse ProcessSpawn(HeroSpawnRequest request, string sourceId)
+    public HeroSpawnResponse ProcessSpawn(HeroSpawnRequest request)
     {
         try
         {
@@ -48,7 +48,6 @@ public class HeroHandler : IHeroHandler
 
             if (_gameState == null)
             {
-                _logger.LogError("[HeroHandler] GameState is null");
                 return null;
             }
 
@@ -59,7 +58,6 @@ public class HeroHandler : IHeroHandler
                 hero = _gameState.GetHero(request.HeroId);
                 if (hero == null)
                 {
-                    _logger.LogError($"[HeroHandler] Failed to create hero {request.HeroId}");
                     return null;
                 }
             }
@@ -74,16 +72,37 @@ public class HeroHandler : IHeroHandler
 
             hero.HeroRadius = request.HeroRadius > 0 ? request.HeroRadius : 0.25f;
             hero.ProbeOffsetY = request.ProbeOffsetY;
+            hero.MaxHealth = Math.Max(hero.MaxHealth, 1);
+            if (hero.CurrentHealth <= 0 || hero.CurrentHealth > hero.MaxHealth)
+            {
+                hero.CurrentHealth = hero.MaxHealth;
+            }
+            hero.HitboxCenterOffsetX = request.HitboxCenterOffsetX;
+            hero.HitboxCenterOffsetY = request.HitboxCenterOffsetY;
+            hero.HitboxHalfSizeX = request.HitboxHalfSizeX;
+            hero.HitboxHalfSizeY = request.HitboxHalfSizeY;
 
-            _physics.CreateHeroBody(request.HeroId, new Microsoft.Xna.Framework.Vector2(spawnX, spawnY), hero.HeroRadius);
+            _physics.CreateHeroBody(request.HeroId, new Vector2(spawnX, spawnY), hero.HeroRadius);
 
             _gameState.UpdateHero(hero);
+
+            int maxHp = 100; int damage = 50;
+            try
+            {
+                var dbHeroTask = _heroService.GetHeroAsync(request.HeroId);
+                dbHeroTask.Wait();
+                var dbHero = dbHeroTask.Result;
+                if (dbHero != null) { maxHp = dbHero.MaxHealth; damage = dbHero.Damage; }
+            }
+            catch { }
 
             return new HeroSpawnResponse
             {
                 HeroId = hero.Id,
                 X = hero.X,
                 Y = hero.Y,
+                MaxHealth = maxHp,
+                Damage = damage,
                 ServerTimestampMs = serverTimestamp
             };
         }
@@ -98,11 +117,7 @@ public class HeroHandler : IHeroHandler
 
     #region ==== Hero Move Methods ====
 
-
-    /// <summary>
-    /// Process hero movement intent event and return position update event
-    /// </summary>
-    public HeroMoveUpdateEvent ProcessMoveIntent(HeroMoveIntentEvent moveIntent, string sourceId)
+    public HeroMoveUpdateEvent ProcessMoveIntent(HeroMoveIntentEvent moveIntent)
     {
         try
         {
@@ -136,15 +151,14 @@ public class HeroHandler : IHeroHandler
                 }
             }
 
-            var currentPosition = new Microsoft.Xna.Framework.Vector2(hero.X, hero.Y);
-            var targetPosition = new Microsoft.Xna.Framework.Vector2(targetX, targetY);
+            var currentPosition = new Vector2(hero.X, hero.Y);
+            var targetPosition = new Vector2(targetX, targetY);
 
             if (!_physics.HasHeroBody(moveIntent.HeroId))
             {
                 _physics.CreateHeroBody(moveIntent.HeroId, currentPosition, hero.HeroRadius);
             }
 
-            // Check collision and adjust position if needed
             if (isMoving && !_physics.IsPositionValid(targetPosition, hero.HeroRadius))
             {
                 targetX = hero.X;
@@ -182,10 +196,7 @@ public class HeroHandler : IHeroHandler
         }
     }
 
-    /// <summary>
-    /// Process bow state intent event and return bow state update event
-    /// </summary>
-    public BowStateUpdateEvent ProcessBowStateIntent(BowStateIntentEvent bowStateIntent, string sourceId)
+    public BowStateUpdateEvent ProcessBowStateIntent(BowStateIntentEvent bowStateIntent)
     {
         try
         {

@@ -23,70 +23,78 @@ public class ArrowHandler : IArrowHandler
     private readonly ILogger<ArrowHandler> _logger;
     private readonly ServerPhysicsManager _physics;
     private readonly Random _random = new();
-    
-    // Arrow constants
-    private const float MAX_CHARGE_TIME = 1.0f; // 1 second max charge
+    private readonly Hobow_Server.Services.IHeroService _heroService;
+
+    private const float MAX_CHARGE_TIME = 1.0f;
     private const float MAX_DAMAGE = 50f;
     private const float BASE_DAMAGE = 10f;
     private const float ARROW_SPEED = 15f;
-    private const float ARROW_LIFETIME = 5f; // 5 seconds stuck lifetime
-    private const float ARROW_SIZE = 0.1f; // For collision detection
+    private const float ARROW_MAX_LIFETIME = 3f;
+    private const float ARROW_SIZE = 0.1f;
 
-    public ArrowHandler(GameState gameState, IHubContext<HeroHub> heroHub, IHubContext<EnemyHub> enemyHub, ILogger<ArrowHandler> logger, ServerPhysicsManager physics)
+    public ArrowHandler(GameState gameState, IHubContext<HeroHub> heroHub, IHubContext<EnemyHub> enemyHub, ILogger<ArrowHandler> logger, ServerPhysicsManager physics, Hobow_Server.Services.IHeroService heroService)
     {
         _gameState = gameState;
         _heroHub = heroHub;
         _enemyHub = enemyHub;
         _logger = logger;
         _physics = physics;
+        _heroService = heroService;
     }
 
-    /// <summary>
-    /// Process arrow shoot intent and spawn arrow if valid
-    /// </summary>
+
     public ArrowSpawnedEvent ProcessArrowShootIntent(ArrowShootIntentEvent shootIntent, string sourceId)
     {
         try
         {
             var serverTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            
-            Console.WriteLine($"[ArrowHandler] Processing shoot intent - HeroId: {shootIntent.HeroId}, Start: ({shootIntent.StartX}, {shootIntent.StartY}), Direction: ({shootIntent.DirectionX}, {shootIntent.DirectionY}), Charge: {shootIntent.ChargeTime}");
 
-            // Validate hero exists
             var hero = _gameState.GetHero(shootIntent.HeroId);
             if (hero == null)
             {
-                _logger.LogWarning($"[ArrowHandler] Hero {shootIntent.HeroId} not found in ProcessArrowShootIntent");
+
                 return null;
             }
 
-            // Calculate damage based on charge (10-50 damage)
             var chargePercent = Math.Clamp(shootIntent.ChargePercent, 0f, 1f);
-            var damage = BASE_DAMAGE + (MAX_DAMAGE - BASE_DAMAGE) * chargePercent;
 
-            // Calculate accuracy based on charge (more charge = more accurate)
+            int heroMaxDamage = (int)MAX_DAMAGE;
+            try
+            {
+                var heroEntityTask = _heroService.GetHeroAsync(shootIntent.HeroId);
+                heroEntityTask.Wait();
+                var heroEntity = heroEntityTask.Result;
+                if (heroEntity != null && heroEntity.Damage > 0)
+                {
+                    heroMaxDamage = heroEntity.Damage;
+                }
+            }
+            catch (Exception fetchEx)
+            {
+
+            }
+
+            var damage = BASE_DAMAGE + (heroMaxDamage - BASE_DAMAGE) * chargePercent;
+
             var accuracy = chargePercent;
 
-            // Add some randomness to direction based on accuracy
             var directionX = shootIntent.DirectionX;
             var directionY = shootIntent.DirectionY;
-            
+
             if (accuracy < 1f)
             {
-                var inaccuracy = (1f - accuracy) * 0.3f; // Max 30% inaccuracy
+                var inaccuracy = (1f - accuracy) * 0.3f;
                 var randomAngle = (_random.NextSingle() - 0.5f) * inaccuracy;
-                
-                // Rotate direction vector by random angle
+
                 var cos = Math.Cos(randomAngle);
                 var sin = Math.Sin(randomAngle);
                 var newX = directionX * cos - directionY * sin;
                 var newY = directionX * sin + directionY * cos;
-                
+
                 directionX = (float)newX;
                 directionY = (float)newY;
             }
 
-            // Normalize direction
             var length = Math.Sqrt(directionX * directionX + directionY * directionY);
             if (length > 0)
             {
@@ -94,11 +102,9 @@ public class ArrowHandler : IArrowHandler
                 directionY /= (float)length;
             }
 
-            // Create arrow
-            var arrowId = _gameState.SpawnArrow(shootIntent.HeroId, shootIntent.StartX, shootIntent.StartY, 
+            var arrowId = _gameState.SpawnArrow(shootIntent.HeroId, shootIntent.StartX, shootIntent.StartY,
                 directionX, directionY, ARROW_SPEED, damage, accuracy);
 
-            _logger.LogInformation($"[ArrowHandler] Arrow {arrowId} shot by hero {shootIntent.HeroId}, damage: {damage:F1}, accuracy: {accuracy:F2}");
 
             return new ArrowSpawnedEvent
             {
@@ -121,33 +127,41 @@ public class ArrowHandler : IArrowHandler
         }
     }
 
-    /// <summary>
-    /// Update all active arrows (move them and check collisions)
-    /// </summary>
+
     public async Task UpdateArrowsAsync()
     {
         try
         {
             var arrows = _gameState.GetAllArrows().Where(a => a.IsActive && !a.IsStuck).ToList();
-            
+
             foreach (var arrow in arrows)
             {
-                // Move arrow
-                var deltaTime = 0.016f; // ~60 FPS
+                var ageSeconds = (DateTime.UtcNow - arrow.CreatedAt).TotalSeconds;
+                if (ageSeconds >= ARROW_MAX_LIFETIME)
+                {
+                    _gameState.RemoveArrow(arrow.ArrowId);
+                    var removeEvent = new ArrowRemovedEvent
+                    {
+                        ArrowId = arrow.ArrowId,
+                        ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                    };
+                    await _heroHub.Clients.All.SendAsync("ArrowRemoved", removeEvent);
+                    _logger.LogInformation($"[ArrowHandler] Removed expired arrow {arrow.ArrowId} after {ageSeconds:F2}s");
+                    continue;
+                }
+
+                var deltaTime = 0.016f;
                 var newX = arrow.X + arrow.DirectionX * arrow.Speed * deltaTime;
                 var newY = arrow.Y + arrow.DirectionY * arrow.Speed * deltaTime;
 
-                // Check for collisions
                 var hitResult = CheckArrowCollision(arrow, newX, newY);
-                
+
                 if (hitResult.HasHit)
                 {
-                    // Arrow hit something
                     await HandleArrowHit(arrow, hitResult);
                 }
                 else
                 {
-                    // Update arrow position
                     _gameState.UpdateArrowPosition(arrow.ArrowId, newX, newY);
                 }
             }
@@ -158,9 +172,6 @@ public class ArrowHandler : IArrowHandler
         }
     }
 
-    /// <summary>
-    /// Remove arrows that have been stuck for 5 seconds
-    /// </summary>
     public async Task RemoveStuckArrowsAsync()
     {
         try
@@ -172,7 +183,7 @@ public class ArrowHandler : IArrowHandler
             foreach (var arrow in stuckArrows)
             {
                 _gameState.RemoveArrow(arrow.ArrowId);
-                
+
                 var removeEvent = new ArrowRemovedEvent
                 {
                     ArrowId = arrow.ArrowId,
@@ -180,7 +191,7 @@ public class ArrowHandler : IArrowHandler
                 };
 
                 await _heroHub.Clients.All.SendAsync("ArrowRemoved", removeEvent);
-                
+
                 _logger.LogInformation($"[ArrowHandler] Removed stuck arrow {arrow.ArrowId}");
             }
         }
@@ -192,40 +203,73 @@ public class ArrowHandler : IArrowHandler
 
     private (bool HasHit, string HitType, int? TargetId, float HitX, float HitY) CheckArrowCollision(Arrow arrow, float newX, float newY)
     {
-        // Check wall collision
         if (!_physics.IsPositionValid(new Microsoft.Xna.Framework.Vector2(newX, newY), ARROW_SIZE, arrow.ArrowId))
         {
-            Console.WriteLine($"[ArrowHandler] Arrow {arrow.ArrowId} hit wall at ({newX}, {newY})");
             return (true, "Wall", null, newX, newY);
         }
 
-        // Check enemy collision
         var enemies = _gameState.GetAllEnemies();
-        Console.WriteLine($"[ArrowHandler] Checking collision for arrow {arrow.ArrowId} at ({newX}, {newY}) against {enemies.Count()} enemies");
-        
         foreach (var enemy in enemies)
         {
-            var distance = Math.Sqrt(Math.Pow(newX - enemy.X, 2) + Math.Pow(newY - enemy.Y, 2));
-            Console.WriteLine($"[ArrowHandler] Arrow {arrow.ArrowId} distance to enemy {enemy.EnemyId} at ({enemy.X}, {enemy.Y}): {distance:F2}");
-            
-            if (distance < 0.5f) // Enemy hit radius
+            if (enemy.HitboxHalfSizeX > 0f && enemy.HitboxHalfSizeY > 0f)
             {
-                Console.WriteLine($"[ArrowHandler] Arrow {arrow.ArrowId} HIT enemy {enemy.EnemyId}!");
-                return (true, "Enemy", enemy.EnemyId, newX, newY);
+                float cx = enemy.X + enemy.HitboxCenterOffsetX;
+                float cy = enemy.Y + enemy.HitboxCenterOffsetY;
+                float minX = cx - enemy.HitboxHalfSizeX;
+                float maxX = cx + enemy.HitboxHalfSizeX;
+                float minY = cy - enemy.HitboxHalfSizeY;
+                float maxY = cy + enemy.HitboxHalfSizeY;
+
+                if (newX >= minX && newX <= maxX && newY >= minY && newY <= maxY)
+                {
+                    return (true, "Enemy", enemy.EnemyId, newX, newY);
+                }
+            }
+            else
+            {
+                const float enemyCenterOffsetY = 0.30f;
+                const float enemyHitRadius = 0.60f;
+                var enemyCenterY = enemy.Y + enemyCenterOffsetY;
+                var dxE = newX - enemy.X;
+                var dyE = newY - enemyCenterY;
+                var distance = Math.Sqrt(dxE * dxE + dyE * dyE);
+                if (distance < enemyHitRadius)
+                {
+                    return (true, "Enemy", enemy.EnemyId, newX, newY);
+                }
             }
         }
 
-        // Check hero collision (other heroes, not the shooter)
         var heroes = _gameState.GetAllHeroes();
         foreach (var hero in heroes)
         {
-            if (hero.Id == arrow.HeroId) continue; // Don't hit the shooter
-            
-            var distance = Math.Sqrt(Math.Pow(newX - hero.X, 2) + Math.Pow(newY - hero.Y, 2));
-            if (distance < 0.5f) // Hero hit radius
+            if (hero.Id == arrow.HeroId) continue; 
+
+            if (hero.HitboxHalfSizeX > 0f && hero.HitboxHalfSizeY > 0f)
             {
-                Console.WriteLine($"[ArrowHandler] Arrow {arrow.ArrowId} hit hero {hero.Id}!");
-                return (true, "Hero", hero.Id, newX, newY);
+                float cx = hero.X + hero.HitboxCenterOffsetX;
+                float cy = hero.Y + hero.HitboxCenterOffsetY;
+                float minX = cx - hero.HitboxHalfSizeX;
+                float maxX = cx + hero.HitboxHalfSizeX;
+                float minY = cy - hero.HitboxHalfSizeY;
+                float maxY = cy + hero.HitboxHalfSizeY;
+
+                if (newX >= minX && newX <= maxX && newY >= minY && newY <= maxY)
+                {
+                    return (true, "Hero", hero.Id, newX, newY);
+                }
+            }
+            else
+            {
+                var heroCenterY = hero.Y + hero.ProbeOffsetY;
+                var dxH = newX - hero.X;
+                var dyH = newY - heroCenterY;
+                var distance = Math.Sqrt(dxH * dxH + dyH * dyH);
+                const float heroHitRadius = 0.50f;
+                if (distance < heroHitRadius)
+                {
+                    return (true, "Hero", hero.Id, newX, newY);
+                }
             }
         }
 
@@ -236,9 +280,8 @@ public class ArrowHandler : IArrowHandler
     {
         try
         {
-            // Mark arrow as stuck
             _gameState.StickArrow(arrow.ArrowId, hitResult.HitType, hitResult.TargetId, hitResult.HitX, hitResult.HitY);
-            
+
             var hitEvent = new ArrowHitEvent
             {
                 ArrowId = arrow.ArrowId,
@@ -252,7 +295,6 @@ public class ArrowHandler : IArrowHandler
                 ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             };
 
-            // Handle damage if hit enemy or hero
             if (hitResult.HitType == "Enemy" && hitResult.TargetId.HasValue)
             {
                 var enemy = _gameState.GetEnemy(hitResult.TargetId.Value);
@@ -260,16 +302,12 @@ public class ArrowHandler : IArrowHandler
                 {
                     enemy.Health -= (int)arrow.Damage;
                     hitEvent.RemainingHealth = enemy.Health;
-                    
-                    _logger.LogInformation($"[ArrowHandler] Arrow {arrow.ArrowId} hit enemy {hitResult.TargetId}, damage: {arrow.Damage}, remaining health: {enemy.Health}");
-                    
+
+
                     if (enemy.Health <= 0)
                     {
-                        // Disable enemy instead of removing from DB
                         enemy.IsActive = false;
-                        _logger.LogInformation($"[ArrowHandler] Enemy {hitResult.TargetId} killed by arrow {arrow.ArrowId} - disabled");
-                        
-                        // Send enemy death event to all clients via enemy hub
+
                         await _enemyHub.Clients.All.SendAsync("EnemyRemoved", hitResult.TargetId.Value);
                     }
                 }
@@ -279,21 +317,16 @@ public class ArrowHandler : IArrowHandler
                 var hero = _gameState.GetHero(hitResult.TargetId.Value);
                 if (hero != null)
                 {
-                    // For now, heroes don't take damage (can be implemented later)
-                    hitEvent.RemainingHealth = 100; // Full health for heroes
-                    _logger.LogInformation($"[ArrowHandler] Arrow {arrow.ArrowId} hit hero {hitResult.TargetId} (no damage)");
+                    hitEvent.RemainingHealth = 100; 
                 }
             }
 
-            // Send hit event to all clients via appropriate hub
             if (hitResult.HitType == "Enemy")
             {
-                Console.WriteLine($"[ArrowHandler] Sending ArrowHit event to EnemyHub - ArrowId: {hitEvent.ArrowId}, TargetId: {hitEvent.TargetId}, HitType: {hitEvent.HitType}");
                 await _enemyHub.Clients.All.SendAsync("ArrowHit", hitEvent);
             }
             else
             {
-                Console.WriteLine($"[ArrowHandler] Sending ArrowHit event to HeroHub - ArrowId: {hitEvent.ArrowId}, TargetId: {hitEvent.TargetId}, HitType: {hitEvent.HitType}");
                 await _heroHub.Clients.All.SendAsync("ArrowHit", hitEvent);
             }
         }

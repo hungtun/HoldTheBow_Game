@@ -11,11 +11,22 @@ public class LogEnemyController : MonoBehaviour
     public float smoothTime = 0.1f;
     public float positionThreshold = 0.01f;
 
+    [SerializeField] private HealthBar healthBar;
+
 
     private Vector3 targetPosition;
     private Vector3 velocity = Vector3.zero;
     private bool wakeUp = false;
     private Vector3 lastPosition;
+
+    [Header("Chase Settings")]
+    public float chaseRadius = 5f;
+    public float homeSleepThreshold = 0.3f; 
+    private Transform localPlayer;
+    private Vector3 homePosition;
+
+    private int currentHealth;
+    private int maxHealth;
 
     void Start()
     {
@@ -23,7 +34,13 @@ public class LogEnemyController : MonoBehaviour
         if (spriteRenderer == null) spriteRenderer = GetComponent<SpriteRenderer>();
 
         targetPosition = transform.position;
+        homePosition = transform.position; 
         lastPosition = transform.position;
+        currentHealth = maxHealth;
+        healthBar.SetMaxHealth(maxHealth);
+
+        var local = FindObjectOfType<LocalPlayerController>();
+        if (local != null) localPlayer = local.transform;
     }
 
     void Update()
@@ -33,10 +50,11 @@ public class LogEnemyController : MonoBehaviour
             transform.position = Vector3.SmoothDamp(transform.position, targetPosition, ref velocity, smoothTime);
             wakeUp = true;
         }
-        else
+        else 
         {
             transform.position = targetPosition;
-            wakeUp = false;
+            float distHome = Vector3.Distance(transform.position, homePosition);
+            wakeUp = distHome <= homeSleepThreshold ? false : true;
         }
 
         UpdateAnimation();
@@ -52,6 +70,15 @@ public class LogEnemyController : MonoBehaviour
         if (wakeUp && dir.sqrMagnitude > 1e-6f)
         {
             changeAnimator(dir);
+        }
+        else if (wakeUp && localPlayer != null)
+        {
+            Vector3 toPlayer = localPlayer.position - transform.position;
+            Vector2 dirToPlayer = new Vector2(toPlayer.x, toPlayer.y);
+            if (dirToPlayer.sqrMagnitude > 1e-6f)
+            {
+                changeAnimator(dirToPlayer.normalized);
+            }
         }
 
         lastPosition = transform.position;

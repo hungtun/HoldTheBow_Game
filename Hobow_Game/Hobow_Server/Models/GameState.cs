@@ -76,9 +76,13 @@ public class GameState
             MapId = mapId,
             X = x,
             Y = y,
+            HomeX = x,
+            HomeY = y,
             Health = 100,
             Attack = 10,
             MoveSpeed = 2f,
+            AttackCooldownMs = 1500,
+            LastAttackMs = 0,
             ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
@@ -181,7 +185,7 @@ public class GameState
             arrow.IsStuck = true;
             arrow.StuckTargetType = targetType;
             arrow.StuckTargetId = targetId;
-            arrow.RemoveAt = DateTime.UtcNow.AddSeconds(5); // Remove after 5 seconds
+            arrow.RemoveAt = DateTime.UtcNow.AddSeconds(3);
         }
     }
 
@@ -211,6 +215,13 @@ public class HeroState
     public string MapId { get; set; } = "Home";
     public float HeroRadius { get; set; } = 0.25f;
     public float ProbeOffsetY { get; set; } = -0.3f;
+    public int MaxHealth { get; set; } = 100;
+    public int CurrentHealth { get; set; } = 100;
+    public int Damage { get; set; } = 50;
+    public float HitboxCenterOffsetX { get; set; }
+    public float HitboxCenterOffsetY { get; set; }
+    public float HitboxHalfSizeX { get; set; }
+    public float HitboxHalfSizeY { get; set; }
 }
 
 public class EnemyState
@@ -220,9 +231,17 @@ public class EnemyState
     public string MapId { get; set; } = "Home";
     public float X { get; set; }
     public float Y { get; set; }
+    public float HomeX { get; set; }
+    public float HomeY { get; set; }
     public int Health { get; set; }
     public int Attack { get; set; }
     public float MoveSpeed { get; set; }
     public long ServerTimestampMs { get; set; }
     public bool IsActive { get; set; } = true;
+    public int AttackCooldownMs { get; set; } = 1000;
+    public long LastAttackMs { get; set; } = 0;
+    public float HitboxCenterOffsetX { get; set; }
+    public float HitboxCenterOffsetY { get; set; }
+    public float HitboxHalfSizeX { get; set; }
+    public float HitboxHalfSizeY { get; set; }
 }

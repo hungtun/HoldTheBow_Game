@@ -2,9 +2,6 @@ using Hobow_Server.Handlers;
 
 namespace Hobow_Server.Services;
 
-/// <summary>
-/// Background service to update arrow physics and remove stuck arrows
-/// </summary>
 public class ArrowUpdateService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
@@ -27,13 +24,10 @@ public class ArrowUpdateService : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var arrowHandler = scope.ServiceProvider.GetRequiredService<IArrowHandler>();
 
-                // Update arrow positions and check collisions
                 await arrowHandler.UpdateArrowsAsync();
 
-                // Remove arrows that have been stuck for 5 seconds
                 await arrowHandler.RemoveStuckArrowsAsync();
 
-                // Run at ~60 FPS
                 await Task.Delay(16, stoppingToken);
             }
             catch (OperationCanceledException)
@@ -43,7 +37,7 @@ public class ArrowUpdateService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[ArrowUpdateService] Error in arrow update loop");
-                await Task.Delay(1000, stoppingToken); // Wait 1 second before retrying
+                await Task.Delay(1000, stoppingToken); 
             }
         }
 

@@ -8,11 +8,12 @@ public class RemotePlayerController : MonoBehaviour
     public Animator animator;
     private SpriteRenderer spriteRenderer;
 
-    // State
     private Vector3 targetPosition;
     private bool isMoving;
     private int playerId;
     private Vector2 lastNonZeroDirection = Vector2.down; 
+    private int currentHealth;
+    private int maxHealth;
 
     private void Awake()
     {
@@ -33,11 +34,23 @@ public class RemotePlayerController : MonoBehaviour
         }
     }
 
-    public void Initialize(int id)
+    public void Initialize(int id, int maxHp, int currentHp)
     {
         playerId = id;
         gameObject.name = $"RemotePlayer_{id}";
         targetPosition = transform.position;
+
+        maxHealth = maxHp;
+        currentHealth = currentHp;
+
+        var healthBar = GetComponentInChildren<HealthBar>(true);
+        if (healthBar != null)
+        {
+            if (maxHealth <= 0) maxHealth = 100;
+            if (currentHealth <= 0) currentHealth = maxHealth;
+            healthBar.SetMaxHealth(maxHealth);
+            healthBar.SetHealth(currentHealth);
+        }
     }
 
     public void UpdatePosition(Vector3 newPosition)
@@ -97,8 +110,6 @@ public class RemotePlayerController : MonoBehaviour
     {
         UpdateAnimation(moving, direction);
     }
-
-
 
     public void Dispose()
     {

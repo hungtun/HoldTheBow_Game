@@ -25,17 +25,18 @@ public class EnemyHandler : IEnemyHandler
     private readonly IEnemyService _enemyService;
     private readonly GameState _gameState;
     private readonly IHubContext<EnemyHub> _enemyHub;
+    private readonly IHubContext<HeroHub> _heroHub;
     private readonly ILogger<EnemyHandler> _logger;
     private readonly ServerPhysicsManager _physics;
     
-    // Optimization: track previous positions to avoid sending unchanged data
     private readonly Dictionary<int, (float X, float Y)> _lastEnemyPositions = new();
 
-    public EnemyHandler(IEnemyService enemyService, GameState gameState, IHubContext<EnemyHub> enemyHub, ILogger<EnemyHandler> logger, ServerPhysicsManager physics)
+    public EnemyHandler(IEnemyService enemyService, GameState gameState, IHubContext<EnemyHub> enemyHub, IHubContext<HeroHub> heroHub, ILogger<EnemyHandler> logger, ServerPhysicsManager physics)
     {
         _enemyService = enemyService;
         _gameState = gameState;
         _enemyHub = enemyHub;
+        _heroHub = heroHub;
         _logger = logger;
         _physics = physics;
     }
@@ -44,19 +45,19 @@ public class EnemyHandler : IEnemyHandler
     {
         try
         {
-            _logger.LogInformation("[EnemyHandler] Starting enemy initialization...");
+        
 
             await Task.Delay(2000);
 
             var spawnPoints = await _enemyService.GetEnabledSpawnPointsAsync();
-            _logger.LogInformation($"[EnemyHandler] Found {spawnPoints.Count} enabled spawn points");
+            
 
             foreach (var spawnPoint in spawnPoints)
             {
                 var enemyDef = await _enemyService.GetEnemyDefinitionAsync(spawnPoint.EnemyDefinitionId);
                 if (enemyDef == null)
                 {
-                    _logger.LogWarning($"[EnemyHandler] Enemy definition not found for spawn point {spawnPoint.Id}");
+                    _logger.LogWarning($"Enemy definition not found for spawn point {spawnPoint.Id}");
                     continue;
                 }
 
@@ -89,10 +90,9 @@ public class EnemyHandler : IEnemyHandler
 
         var enemyId = _gameState.SpawnEnemy(spawnPoint.MapId, enemyDef.EnemyName, x, y);
 
-        // Create physics body for enemy
         _physics.CreateEnemyBody(enemyId, new Microsoft.Xna.Framework.Vector2(x, y), 0.25f);
 
-        _logger.LogInformation($"[EnemyHandler] Spawned {enemyDef.EnemyName} at ({x:F1}, {y:F1})");
+        
 
         return enemyId;
     }
@@ -129,7 +129,6 @@ public class EnemyHandler : IEnemyHandler
 
         var enemyId = _gameState.SpawnEnemy(mapId, enemyName, x, y);
         
-        // Initialize tracking data for optimization
         _lastEnemyPositions[enemyId] = (x, y);
 
         var response = new EnemySpawnResponse
@@ -143,7 +142,7 @@ public class EnemyHandler : IEnemyHandler
 
         await _enemyHub.Clients.All.SendAsync("EnemySpawned", response);
 
-        _logger.LogInformation($"[EnemyHandler] Spawned {enemyName} at ({x}, {y}) on map {mapId}");
+        
 
         return enemyId;
     }
@@ -154,9 +153,7 @@ public class EnemyHandler : IEnemyHandler
     }
 
 
-    /// <summary>
-    /// Process enemy movement intent event and return position update event
-    /// </summary>
+ 
     public EnemyMoveUpdateEvent ProcessEnemyMoveIntent(EnemyMoveIntentEvent moveIntent)
     {
         try
@@ -170,13 +167,11 @@ public class EnemyHandler : IEnemyHandler
                 return null;
             }
 
-            // Check if new position is valid (no collision with map, other enemies, or heroes)
             var newPosition = new Microsoft.Xna.Framework.Vector2(moveIntent.TargetX, moveIntent.TargetY);
             if (!_physics.IsPositionValid(newPosition, 0.25f, moveIntent.EnemyId))
             {
-                _logger.LogDebug($"[EnemyHandler] Enemy {moveIntent.EnemyId} position ({moveIntent.TargetX:F2}, {moveIntent.TargetY:F2}) is invalid, keeping current position");
                 
-                // Return current position if move is invalid
+                
                 return new EnemyMoveUpdateEvent
                 {
                     EnemyId = enemy.EnemyId,
@@ -190,10 +185,8 @@ public class EnemyHandler : IEnemyHandler
                 };
             }
 
-            // Update enemy position in game state
             _gameState.UpdateEnemyPosition(moveIntent.EnemyId, moveIntent.TargetX, moveIntent.TargetY);
             
-            // Update physics body position
             _physics.SetEnemyPosition(moveIntent.EnemyId, newPosition);
 
             return new EnemyMoveUpdateEvent
@@ -210,7 +203,7 @@ public class EnemyHandler : IEnemyHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[EnemyHandler] Error in ProcessEnemyMoveIntent for enemy {EnemyId}", moveIntent.EnemyId);
+            _logger.LogError(ex, "Error in ProcessEnemyMoveIntent for enemy {EnemyId}", moveIntent.EnemyId);
             return null;
         }
     }
@@ -233,10 +226,30 @@ public class EnemyHandler : IEnemyHandler
                 if (nearestHero == null) continue;
 
                 var distance = Math.Sqrt(Math.Pow(nearestHero.X - enemy.X, 2) + Math.Pow(nearestHero.Y - enemy.Y, 2));
-                var chaseRadius = 5f;
-                var attackRadius = 1f;
+                var chaseRadius = 5f;   
+                var leashRadius = 10f; 
+                var attackRadius = 0.8f;
 
-                if (distance <= chaseRadius && distance > attackRadius)
+                var distFromHome = Math.Sqrt(Math.Pow(enemy.X - enemy.HomeX, 2) + Math.Pow(enemy.Y - enemy.HomeY, 2));
+                if (distFromHome > leashRadius)
+                {
+                    var dirHomeX = enemy.HomeX - enemy.X;
+                    var dirHomeY = enemy.HomeY - enemy.Y;
+                    var lenHome = Math.Sqrt(dirHomeX * dirHomeX + dirHomeY * dirHomeY);
+                    if (lenHome > 0)
+                    {
+                        dirHomeX /= (float)lenHome;
+                        dirHomeY /= (float)lenHome;
+                        var moveSpeed = enemy.MoveSpeed * 0.05f;
+                        var newX = enemy.X + dirHomeX * moveSpeed;
+                        var newY = enemy.Y + dirHomeY * moveSpeed;
+                        var moveIntent = new EnemyMoveIntentEvent { EnemyId = enemy.EnemyId, TargetX = newX, TargetY = newY, MoveSpeed = moveSpeed, ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+                        var updateEvent = ProcessEnemyMoveIntent(moveIntent);
+                        if (updateEvent != null) await _enemyHub.Clients.All.SendAsync("EnemyMoveUpdate", updateEvent);
+                        _lastEnemyPositions[enemy.EnemyId] = (newX, newY);
+                    }
+                }
+                else if (distance <= chaseRadius && distance > attackRadius)
                 {
                     var directionX = nearestHero.X - enemy.X;
                     var directionY = nearestHero.Y - enemy.Y;
@@ -248,17 +261,16 @@ public class EnemyHandler : IEnemyHandler
                         directionY /= (float)length;
 
                         var moveSpeed = enemy.MoveSpeed * 0.05f;
-                        var newX = enemy.X + directionX * moveSpeed;
-                        var newY = enemy.Y + directionY * moveSpeed;
+                        var desired = (float)Math.Max(0.01f, distance - attackRadius + 0.05f);
+                        var step = Math.Min(moveSpeed, desired);
+                        var newX = enemy.X + directionX * step;
+                        var newY = enemy.Y + directionY * step;
 
-                        // Check if position changed significantly (optimization)
                         var lastPos = _lastEnemyPositions.GetValueOrDefault(enemy.EnemyId, (enemy.X, enemy.Y));
                         var distanceMoved = Math.Sqrt(Math.Pow(newX - lastPos.X, 2) + Math.Pow(newY - lastPos.Y, 2));
                         
-                        // Only send update if enemy moved more than 0.1 units (optimization threshold)
-                        if (distanceMoved > 0.1f)
+                        if (distanceMoved > 0.02f)
                         {
-                            // Use event-based approach for enemy movement
                             var moveIntent = new EnemyMoveIntentEvent
                             {
                                 EnemyId = enemy.EnemyId,
@@ -273,10 +285,56 @@ public class EnemyHandler : IEnemyHandler
                             {
                                 await _enemyHub.Clients.All.SendAsync("EnemyMoveUpdate", updateEvent);
                                 
-                                // Update last position
                                 _lastEnemyPositions[enemy.EnemyId] = (newX, newY);
                             }
                         }
+                    }
+                }
+                else if (distance > chaseRadius)
+                {
+                    var dirHomeX = enemy.HomeX - enemy.X;
+                    var dirHomeY = enemy.HomeY - enemy.Y;
+                    var lenHome = Math.Sqrt(dirHomeX * dirHomeX + dirHomeY * dirHomeY);
+                    if (lenHome > 0.05f)
+                    {
+                        dirHomeX /= (float)lenHome;
+                        dirHomeY /= (float)lenHome;
+                        var moveSpeed = enemy.MoveSpeed * 0.05f;
+                        var newX = enemy.X + dirHomeX * moveSpeed;
+                        var newY = enemy.Y + dirHomeY * moveSpeed;
+                        var moveIntent = new EnemyMoveIntentEvent
+                        {
+                            EnemyId = enemy.EnemyId,
+                            TargetX = newX,
+                            TargetY = newY,
+                            MoveSpeed = moveSpeed,
+                            ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                        };
+                        var updateEvent = ProcessEnemyMoveIntent(moveIntent);
+                        if (updateEvent != null)
+                        {
+                            await _enemyHub.Clients.All.SendAsync("EnemyMoveUpdate", updateEvent);
+                            _lastEnemyPositions[enemy.EnemyId] = (newX, newY);
+                        }
+                    }
+                }
+                else if (distance <= attackRadius)
+                {
+                    var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    if (now - enemy.LastAttackMs >= enemy.AttackCooldownMs)
+                    {
+                        enemy.LastAttackMs = now;
+                        int damage = Math.Max(1, enemy.Attack);
+                        nearestHero.CurrentHealth = Math.Max(0, nearestHero.CurrentHealth - damage);
+                        var dmgEvent = new SharedLibrary.Events.HeroDamagedEvent
+                        {
+                            HeroId = nearestHero.Id,
+                            Damage = damage,
+                            NewHealth = nearestHero.CurrentHealth,
+                            Source = enemy.EnemyName,
+                            ServerTimestampMs = now
+                        };
+                        await _heroHub.Clients.All.SendAsync("HeroDamaged", dmgEvent);
                     }
                 }
             }
@@ -296,18 +354,16 @@ public class EnemyHandler : IEnemyHandler
 
             enemy.Health -= damage;
 
-            _logger.LogInformation($"[EnemyHandler] Enemy {enemyId} took {damage} damage, health: {enemy.Health}");
 
             await BroadcastEnemyDamagedAsync(enemyId, damage, enemy.Health);
 
             if (enemy.Health <= 0)
             {
                 _gameState.RemoveEnemy(enemyId);
-                _physics.RemoveEnemyBody(enemyId); // Remove physics body
-                _lastEnemyPositions.Remove(enemyId); // Clean up tracking data
+                _physics.RemoveEnemyBody(enemyId);
+                _lastEnemyPositions.Remove(enemyId);
                 await BroadcastEnemyRemovedAsync(enemyId);
 
-                _logger.LogInformation($"[EnemyHandler] Enemy {enemyId} died and was removed");
                 return true;
             }
 
@@ -336,25 +392,20 @@ public class EnemyHandler : IEnemyHandler
         await _enemyHub.Clients.All.SendAsync("EnemyRemoved", enemyId);
     }
 
-    /// <summary>
-    /// Respawn all disabled enemies (set IsActive = true and reset health)
-    /// </summary>
+
     public Task RespawnEnemiesAsync()
     {
         try
         {
-            // Get all enemies including disabled ones
             var allEnemies = _gameState.GetAllEnemiesIncludingDisabled();
             var disabledEnemies = allEnemies.Where(e => !e.IsActive).ToList();
             
             foreach (var enemy in disabledEnemies)
             {
-                // Reset enemy state
                 enemy.IsActive = true;
-                enemy.Health = 100; // Reset to full health
+                enemy.Health = 100;
                 enemy.ServerTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 
-                _logger.LogInformation($"[EnemyHandler] Respawned enemy {enemy.EnemyId}");
             }
             
             if (disabledEnemies.Any())

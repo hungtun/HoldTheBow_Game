@@ -140,7 +140,6 @@ namespace Hobow_Server.Physics
         
         public bool IsPositionValid(Vector2 position, float radius = 0.25f)
         {
-            // Check collision with map
             if (CheckCollisionWithMap(position, radius))
             {
                 return false;
@@ -151,35 +150,32 @@ namespace Hobow_Server.Physics
         
         public bool IsPositionValid(Vector2 position, float radius, int? excludeEnemyId = null)
         {
-            // Check collision with map
             if (CheckCollisionWithMap(position, radius))
             {
                 return false;
             }
             
-            // Check collision with other enemies
             foreach (var enemyBody in _enemyBodies.Values)
             {
                 if (excludeEnemyId.HasValue && _enemyBodies.ContainsKey(excludeEnemyId.Value) &&
                     _enemyBodies[excludeEnemyId.Value] == enemyBody)
                 {
-                    continue; // Skip self
+                    continue; 
                 }
                 
                 float distance = Vector2.Distance(position, enemyBody.Position);
                 if (distance < radius + enemyBody.Radius)
                 {
-                    return false; // Collision with another enemy
+                    return false;
                 }
             }
             
-            // Check collision with heroes
             foreach (var heroBody in _heroBodies.Values)
             {
                 float distance = Vector2.Distance(position, heroBody.Position);
                 if (distance < radius + heroBody.Radius)
                 {
-                    return false; // Collision with hero
+                    return false; 
                 }
             }
             
@@ -196,7 +192,7 @@ namespace Hobow_Server.Physics
                     {
                         if (IsCircleRectCollision(position, radius, collision.Position, collision.Width, collision.Height))
                         {
-                            return true; // Collision detected
+                            return true; 
                         }
                     }
                     else if (collision.Type == CollisionType.Circle)
@@ -204,13 +200,13 @@ namespace Hobow_Server.Physics
                         float distance = Vector2.Distance(position, collision.Position);
                         if (distance < radius + collision.Radius)
                         {
-                            return true; // Collision detected
+                            return true; 
                         }
                     }
                 }
             }
             
-            return false; // No collision
+            return false;
         }
         
         public void LoadMapCollisions(string mapId, List<MapCollisionData> collisions)

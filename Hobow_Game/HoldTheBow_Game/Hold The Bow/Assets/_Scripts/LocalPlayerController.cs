@@ -13,6 +13,9 @@ public class LocalPlayerController : MonoBehaviour
     [SerializeField] private float reconciliationThreshold = 0.02f;
     [SerializeField] private float reconciliationHardSnapThreshold = 0.4f;
     [SerializeField] private float serverLerpFactor = 0.75f;
+    [Header("UI References")]
+    private HealthBar healthBar;
+
 
     private Animator animator;
     private Rigidbody2D rb;
@@ -21,16 +24,17 @@ public class LocalPlayerController : MonoBehaviour
     private MapDataManager mapDataManager;
     private EnemyClientManager enemyClientManager;
     private float heroRadius = 0.25f;
-    
+
     [Header("Arrow Settings")]
-    public GameObject arrowPrefab; // Gán Arrow prefab trong Inspector
+    public GameObject arrowPrefab;
 
     public HubConnection connection;
-    
-    // Arrow event queues for main thread processing
+
     private System.Collections.Generic.Queue<ArrowSpawnedEvent> arrowSpawnedQueue = new System.Collections.Generic.Queue<ArrowSpawnedEvent>();
     private System.Collections.Generic.Queue<ArrowHitEvent> arrowHitQueue = new System.Collections.Generic.Queue<ArrowHitEvent>();
     private System.Collections.Generic.Queue<ArrowRemovedEvent> arrowRemovedQueue = new System.Collections.Generic.Queue<ArrowRemovedEvent>();
+    private System.Collections.Generic.Queue<HeroDamagedEvent> heroDamagedQueue = new System.Collections.Generic.Queue<HeroDamagedEvent>();
+    private System.Collections.Generic.Queue<int> heroRemovedQueue = new System.Collections.Generic.Queue<int>();
     private string serverBaseUrl;
     private string jwtToken;
     public int heroId;
@@ -41,12 +45,24 @@ public class LocalPlayerController : MonoBehaviour
     private bool isMoving = false;
     private bool lastWasMoving = false;
     private float inputStartMs = 0f;
+    public int currentHealth;
+    public int maxHealth;
+    
+    private SpriteRenderer spriteRenderer;
+    private bool isDamageFlashing = false;
+    private Color originalColor = Color.white;
+    private bool isDead = false;
 
 
     private void Awake()
     {
         animator = GetComponent<Animator>();
         rb = GetComponent<Rigidbody2D>();
+        spriteRenderer = GetComponent<SpriteRenderer>();
+        if (spriteRenderer != null)
+        {
+            originalColor = spriteRenderer.color;
+        }
         remoteManager = FindObjectOfType<RemotePlayerManager>();
         logoutManager = FindObjectOfType<LogoutManager>();
         mapDataManager = FindObjectOfType<MapDataManager>();
@@ -73,6 +89,23 @@ public class LocalPlayerController : MonoBehaviour
         {
             enemyClientManager.Initialize(serverBaseUrl, jwtToken);
         }
+        
+        if (healthBar == null)
+        {
+            var go = GameObject.FindGameObjectWithTag("LocalHealthBar");
+            if (go != null)
+            {
+                healthBar = go.GetComponent<HealthBar>();
+            }
+        }
+        if (maxHealth <= 0) maxHealth = 100;
+        if (currentHealth <= 0) currentHealth = maxHealth;
+
+        if (healthBar != null)
+        {
+            healthBar.SetMaxHealth(maxHealth);
+            healthBar.SetHealth(currentHealth);
+        }
     }
 
     private void Update()
@@ -80,25 +113,24 @@ public class LocalPlayerController : MonoBehaviour
         HandleInput();
         UpdateAnimation();
         ProcessArrowEvents();
+        ProcessHeroRemovedEvents();
+        ProcessHeroDamagedEvents();
     }
-    
+
     private void ProcessArrowEvents()
     {
-        // Process arrow spawned events
         while (arrowSpawnedQueue.Count > 0)
         {
             var spawnedEvent = arrowSpawnedQueue.Dequeue();
             ProcessArrowSpawned(spawnedEvent);
         }
-        
-        // Process arrow hit events
+
         while (arrowHitQueue.Count > 0)
         {
             var hitEvent = arrowHitQueue.Dequeue();
             ProcessArrowHit(hitEvent);
         }
-        
-        // Process arrow removed events
+
         while (arrowRemovedQueue.Count > 0)
         {
             var removedEvent = arrowRemovedQueue.Dequeue();
@@ -134,6 +166,8 @@ public class LocalPlayerController : MonoBehaviour
             connection.On<ArrowSpawnedEvent>("ArrowSpawned", OnArrowSpawned);
             connection.On<ArrowHitEvent>("ArrowHit", OnArrowHit);
             connection.On<ArrowRemovedEvent>("ArrowRemoved", OnArrowRemoved);
+            connection.On<HeroDamagedEvent>("HeroDamaged", OnHeroDamaged);
+            connection.On<HeroDamagedEvent>("HeroDamaged", OnHeroDamaged);
 
             await connection.StartAsync();
 
@@ -173,6 +207,7 @@ public class LocalPlayerController : MonoBehaviour
 
     private void HandleInput()
     {
+        if(isDead) return;
         change = Vector3.zero;
         change.x = Input.GetAxisRaw("Horizontal");
         change.y = Input.GetAxisRaw("Vertical");
@@ -225,8 +260,6 @@ public class LocalPlayerController : MonoBehaviour
         }
     }
 
-    
-
     private void MovePlayer()
     {
         if (isMoving)
@@ -243,20 +276,14 @@ public class LocalPlayerController : MonoBehaviour
             rb.velocity = Vector2.zero;
         }
 
-
         float nowMs = NowMs();
         if (nowMs - lastSendMs >= sendIntervalMs)
         {
             lastSendMs = nowMs;
-            // Use new event-based approach instead of request/response
             _ = SendMoveIntentToServer();
         }
     }
 
-
-    /// <summary>
-    /// Send hero movement intent event (new event-based approach)
-    /// </summary>
     private async Task SendMoveIntentToServer()
     {
         if (connection?.State != HubConnectionState.Connected) return;
@@ -283,42 +310,42 @@ public class LocalPlayerController : MonoBehaviour
     {
         if (connection?.State != HubConnectionState.Connected) return;
 
-
-        try
+        float outHeroRadius = 0.25f;
+        float outProbeOffsetY = -0.3f;
+        var col = GetComponent<Collider2D>();
+        if (col != null)
         {
-
-
-            var collider = GetComponent<Collider2D>();
-            float heroRadius = 0.25f;
-            float probeOffsetY = -0.3f;
-
-            if (collider != null)
-            {
-                var bounds = collider.bounds;
-                heroRadius = Mathf.Max(bounds.extents.x, bounds.extents.y);
-                probeOffsetY = bounds.center.y - transform.position.y;
-            }
-            var request = new HeroSpawnRequest
-            {
-                HeroId = heroId,
-                X = transform.position.x,
-                Y = transform.position.y,
-                HeroRadius = heroRadius,
-                ProbeOffsetY = probeOffsetY
-            };
-
-            await connection.InvokeAsync("Spawn", request);
+            var bounds = col.bounds;
+            outHeroRadius = Mathf.Max(bounds.extents.x, bounds.extents.y);
+            outProbeOffsetY = bounds.center.y - transform.position.y;
         }
-        catch (Exception ex)
+
+        var box = GetComponent<BoxCollider2D>();
+        Vector2 centerOffset = Vector2.zero;
+        Vector2 half = new Vector2(outHeroRadius, outHeroRadius);
+        if (box != null)
         {
-            Debug.LogWarning($"[LocalPlayerController] Send spawn failed: {ex.Message}");
+            var b = box.bounds; 
+            centerOffset = (Vector2)(b.center - transform.position);
+            half = (Vector2)b.extents;
         }
+
+        var request = new HeroSpawnRequest
+        {
+            HeroId = heroId,
+            X = transform.position.x,
+            Y = transform.position.y,
+            HeroRadius = outHeroRadius,
+            ProbeOffsetY = outProbeOffsetY,
+            HitboxCenterOffsetX = centerOffset.x,
+            HitboxCenterOffsetY = centerOffset.y,
+            HitboxHalfSizeX = half.x,
+            HitboxHalfSizeY = half.y
+        };
+
+        await connection.InvokeAsync("Spawn", request);
     }
 
-
-    /// <summary>
-    /// Handle hero movement update event (new event-based approach)
-    /// </summary>
     private void OnHeroMoveUpdate(HeroMoveUpdateEvent updateEvent)
     {
         if (updateEvent.HeroId == heroId)
@@ -328,29 +355,16 @@ public class LocalPlayerController : MonoBehaviour
 
             float distance = Vector3.Distance(serverPosition, localPosition);
 
-            // Hard snap if position is too far off
             if (distance >= reconciliationHardSnapThreshold)
             {
                 rb.position = serverPosition;
                 return;
             }
 
-            // Smooth reconciliation if position is slightly off
             if (distance > reconciliationThreshold)
             {
                 Vector3 smoothPos = Vector3.Lerp(localPosition, serverPosition, serverLerpFactor);
                 rb.position = smoothPos;
-            }
-
-            // Update animation based on movement state
-            if (animator != null)
-            {
-                animator.SetBool("isMoving", updateEvent.IsMoving);
-                if (updateEvent.IsMoving && !string.IsNullOrEmpty(updateEvent.Direction))
-                {
-                    animator.SetFloat("moveX", updateEvent.Direction == "left" ? -1f : updateEvent.Direction == "right" ? 1f : 0f);
-                    animator.SetFloat("moveY", updateEvent.Direction == "up" ? 1f : updateEvent.Direction == "down" ? -1f : 0f);
-                }
             }
         }
     }
@@ -361,10 +375,22 @@ public class LocalPlayerController : MonoBehaviour
         {
             Vector3 serverPosition = new Vector3(response.X, response.Y, 0f);
             rb.position = serverPosition;
+
+            if (response.MaxHealth > 0)
+            {
+                maxHealth = response.MaxHealth;
+                if (currentHealth <= 0 || currentHealth > maxHealth)
+                {
+                    currentHealth = maxHealth;
+                }
+                if (healthBar != null)
+                {
+                    healthBar.SetMaxHealth(maxHealth);
+                    healthBar.SetHealth(currentHealth);
+                }
+            }
         }
     }
-
-
 
     private async void OnDisable()
     {
@@ -395,32 +421,42 @@ public class LocalPlayerController : MonoBehaviour
 
     private void OnHeroRemoved(int removedHeroId)
     {
-        try
+        heroRemovedQueue.Enqueue(removedHeroId);
+    }
+
+    private void ProcessHeroRemovedEvents()
+    {
+        while (heroRemovedQueue.Count > 0)
         {
-            Debug.LogWarning($"[LocalPlayerController] Hero {removedHeroId} was removed from game");
+            var removedHeroId = heroRemovedQueue.Dequeue();
 
-            if (removedHeroId == heroId)
+            try
             {
-                Debug.LogWarning("[LocalPlayerController] My hero was removed, returning to hero selection");
+                Debug.LogWarning($"[LocalPlayerController] Hero {removedHeroId} was removed from game");
 
-                if (connection != null && connection.State == HubConnectionState.Connected)
+                if (removedHeroId == heroId)
                 {
-                    _ = connection.StopAsync();
+                    Debug.LogWarning("[LocalPlayerController] My hero was removed, returning to hero selection");
+
+                    if (connection != null && connection.State == HubConnectionState.Connected)
+                    {
+                        connection.StopAsync();
+                    }
+
+                    Session.JwtToken = null;
+                    Session.SelectedHeroId = 0;
+
+                    UnityEngine.SceneManagement.SceneManager.LoadScene("HeroSelection");
                 }
-
-                Session.JwtToken = null;
-                Session.SelectedHeroId = 0;
-
-                UnityEngine.SceneManagement.SceneManager.LoadScene("HeroSelection");
+                else
+                {
+                    Debug.Log($"[LocalPlayerController] Remote hero {removedHeroId} was removed");
+                }
             }
-            else
+            catch (System.Exception ex)
             {
-                Debug.Log($"[LocalPlayerController] Remote hero {removedHeroId} was removed");
+                Debug.LogError($"[LocalPlayerController] ProcessHeroRemovedEvents failed: {ex.Message}");
             }
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError($"[LocalPlayerController] OnHeroRemoved failed: {ex.Message}");
         }
     }
 
@@ -438,70 +474,53 @@ public class LocalPlayerController : MonoBehaviour
         UnityEngine.SceneManagement.SceneManager.LoadScene("LoginScene");
     }
 
-    /// <summary>
-    /// Handle arrow spawned event (for local player's own arrows)
-    /// </summary>
+ 
     private void OnArrowSpawned(ArrowSpawnedEvent spawnedEvent)
     {
-        Debug.Log($"[LocalPlayerController] OnArrowSpawned received - ArrowId: {spawnedEvent.ArrowId}, HeroId: {spawnedEvent.HeroId}");
         
-        // Enqueue for main thread processing
+
         arrowSpawnedQueue.Enqueue(spawnedEvent);
     }
-    
+
     private void ProcessArrowSpawned(ArrowSpawnedEvent spawnedEvent)
     {
         try
         {
-            Debug.Log($"[LocalPlayerController] Processing arrow spawned - ArrowId: {spawnedEvent.ArrowId}, arrowPrefab: {arrowPrefab != null}");
-            
             if (arrowPrefab != null)
             {
-                Debug.Log($"[LocalPlayerController] Instantiating arrow at position ({spawnedEvent.StartX}, {spawnedEvent.StartY})");
-                
-                // Calculate rotation based on arrow direction
-                Vector2 direction = new Vector2(spawnedEvent.DirectionX, spawnedEvent.DirectionY);
-                float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg; // Subtract 90 degrees to correct orientation
-                Quaternion rotation = Quaternion.AngleAxis(angle, Vector3.forward);
-                
-                var arrowObj = Instantiate(arrowPrefab, new Vector3(spawnedEvent.StartX, spawnedEvent.StartY, 0f), rotation);
+                var arrowObj = Instantiate(arrowPrefab, new Vector3(spawnedEvent.StartX, spawnedEvent.StartY, 0f), Quaternion.identity);
                 arrowObj.name = $"Arrow_{spawnedEvent.ArrowId}";
-                Debug.Log($"[LocalPlayerController] Arrow object created: {arrowObj.name} with rotation: {angle}°");
                 
+
                 var arrowController = arrowObj.GetComponent<ArrowController>();
                 if (arrowController != null)
                 {
-                    Debug.Log($"[LocalPlayerController] Initializing ArrowController for arrow {spawnedEvent.ArrowId}");
+                    
                     arrowController.Initialize(spawnedEvent);
-                    Debug.Log($"[LocalPlayerController] Arrow {spawnedEvent.ArrowId} created and initialized successfully");
+                    
                 }
                 else
                 {
-                    Debug.LogError($"[LocalPlayerController] ArrowController component not found on arrow prefab!");
+                    Debug.LogError("ArrowController component not found on arrow prefab!");
                 }
             }
             else
             {
-                Debug.LogWarning("[LocalPlayerController] Arrow prefab is not assigned!");
+                
             }
         }
         catch (System.Exception ex)
         {
-            Debug.LogError($"[LocalPlayerController] Error in ProcessArrowSpawned: {ex.Message}\n{ex.StackTrace}");
+            Debug.LogError($"Error in ProcessArrowSpawned: {ex.Message}\n{ex.StackTrace}");
         }
     }
 
-    /// <summary>
-    /// Handle arrow hit event
-    /// </summary>
+  
     private void OnArrowHit(ArrowHitEvent hitEvent)
     {
-        Debug.Log($"[LocalPlayerController] OnArrowHit received - ArrowId: {hitEvent.ArrowId}");
-        
-        // Enqueue for main thread processing
         arrowHitQueue.Enqueue(hitEvent);
     }
-    
+
     private void ProcessArrowHit(ArrowHitEvent hitEvent)
     {
         var arrowObj = GameObject.Find($"Arrow_{hitEvent.ArrowId}");
@@ -511,30 +530,94 @@ public class LocalPlayerController : MonoBehaviour
             if (arrowController != null)
             {
                 arrowController.HandleHit(hitEvent);
-                Debug.Log($"[LocalPlayerController] Arrow {hitEvent.ArrowId} hit handled");
+                
             }
         }
     }
 
-    /// <summary>
-    /// Handle arrow removed event
-    /// </summary>
     private void OnArrowRemoved(ArrowRemovedEvent removedEvent)
     {
-        Debug.Log($"[LocalPlayerController] OnArrowRemoved received - ArrowId: {removedEvent.ArrowId}");
-        
-        // Enqueue for main thread processing
         arrowRemovedQueue.Enqueue(removedEvent);
     }
-    
+
     private void ProcessArrowRemoved(ArrowRemovedEvent removedEvent)
     {
         var arrowObj = GameObject.Find($"Arrow_{removedEvent.ArrowId}");
         if (arrowObj != null)
         {
             Destroy(arrowObj);
-            Debug.Log($"[LocalPlayerController] Arrow {removedEvent.ArrowId} destroyed");
+            
         }
+    }
+
+    private void OnHeroDamaged(HeroDamagedEvent dmg)
+    {
+        if (dmg == null) return;
+        heroDamagedQueue.Enqueue(dmg);
+    }
+
+    private void ProcessHeroDamagedEvents()
+    {
+        while (heroDamagedQueue.Count > 0)
+        {
+            var dmg = heroDamagedQueue.Dequeue();
+            if (dmg.HeroId != heroId) continue;
+
+            currentHealth = Mathf.Max(0, dmg.NewHealth);
+            if (healthBar != null)
+            {
+                healthBar.SetHealth(currentHealth);
+            }
+
+            if (spriteRenderer != null && !isDamageFlashing)
+            {
+                StartCoroutine(FlashLocalHero());
+            }
+            
+
+            if (!isDead && currentHealth <= 0)
+            {
+                isDead = true;
+                StartCoroutine(HandleLocalHeroDeath());
+            }
+        }
+    }
+
+    private System.Collections.IEnumerator FlashLocalHero()
+    {
+        isDamageFlashing = true;
+        spriteRenderer.color = Color.red;
+        yield return new WaitForSeconds(1f);
+        spriteRenderer.color = originalColor;
+        isDamageFlashing = false;
+    }
+
+    private System.Collections.IEnumerator HandleLocalHeroDeath()
+    {
+        if (animator != null)
+        {
+            animator.SetBool("moving", false);
+            animator.SetTrigger("dying");
+        }
+
+        if (rb != null)
+        {
+            rb.velocity = Vector2.zero;
+        }
+        yield return new WaitForSeconds(3f);
+
+        try
+        {
+            if (connection != null && connection.State == HubConnectionState.Connected)
+            {
+                connection.StopAsync();
+            }
+        }
+        catch {}
+
+        Session.JwtToken = null;
+        Session.SelectedHeroId = 0;
+        UnityEngine.SceneManagement.SceneManager.LoadScene("HeroSelection");
     }
 
     private void OnDestroy()

@@ -199,8 +199,11 @@ MonoBehaviour:
   reconciliationThreshold: 0.02
   reconciliationHardSnapThreshold: 0.4
   serverLerpFactor: 0.75
+  healthBar: {fileID: 0}
   arrowPrefab: {fileID: 4995959201167108961, guid: 7ce6342d3da55407991946feec1263c5, type: 3}
   heroId: 0
+  currentHealth: 0
+  maxHealth: 0
 --- !u!1 &6764982697789776021
 GameObject:
   m_ObjectHideFlags: 0

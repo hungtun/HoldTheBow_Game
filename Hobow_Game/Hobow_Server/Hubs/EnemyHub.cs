@@ -11,11 +11,13 @@ public class EnemyHub : Hub
 {
     private readonly IEnemyHandler _enemyHandler;
     private readonly ILogger<EnemyHub> _logger;
+    private readonly Models.GameState _gameState;
 
-    public EnemyHub(IEnemyHandler enemyHandler, ILogger<EnemyHub> logger)
+    public EnemyHub(IEnemyHandler enemyHandler, ILogger<EnemyHub> logger, Models.GameState gameState)
     {
         _enemyHandler = enemyHandler;
         _logger = logger;
+        _gameState = gameState;
     }
 
     public override async Task OnConnectedAsync()
@@ -40,6 +42,29 @@ public class EnemyHub : Hub
         }
 
         await base.OnConnectedAsync();
+    }
+
+    /// <summary>
+    /// Client báo cáo hitbox enemy (AABB) lấy từ BoxCollider2D
+    /// </summary>
+    public Task ReportEnemyHitbox(EnemyHitboxReportEvent e)
+    {
+        try
+        {
+            var enemy = _gameState.GetEnemy(e.EnemyId);
+            if (enemy != null)
+            {
+                enemy.HitboxCenterOffsetX = e.CenterOffsetX;
+                enemy.HitboxCenterOffsetY = e.CenterOffsetY;
+                enemy.HitboxHalfSizeX = e.HalfSizeX;
+                enemy.HitboxHalfSizeY = e.HalfSizeY;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[EnemyHub] ReportEnemyHitbox failed for enemy {EnemyId}", e.EnemyId);
+        }
+        return Task.CompletedTask;
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)

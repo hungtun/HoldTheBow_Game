@@ -20,9 +20,7 @@ public class EnemyController : MonoBehaviour
         }
     }
     
-    /// <summary>
-    /// Flash red when enemy is hit
-    /// </summary>
+
     public void FlashRed()
     {
         if (!isFlashing && spriteRenderer != null)
@@ -35,29 +33,23 @@ public class EnemyController : MonoBehaviour
     {
         isFlashing = true;
         
-        // Flash to red
         spriteRenderer.color = flashColor;
         yield return new WaitForSeconds(flashDuration / 2);
         
-        // Flash back to original color
         spriteRenderer.color = originalColor;
         yield return new WaitForSeconds(flashDuration / 2);
         
         isFlashing = false;
     }
     
-    /// <summary>
-    /// Destroy enemy when it dies
-    /// </summary>
+
     public void Die()
     {
-        // Add death effect here if needed
         StartCoroutine(DeathEffect());
     }
     
     private IEnumerator DeathEffect()
     {
-        // Flash red quickly before death
         if (spriteRenderer != null)
         {
             spriteRenderer.color = flashColor;

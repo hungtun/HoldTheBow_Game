@@ -24,7 +24,6 @@ public class LocalPlayerBowController : MonoBehaviour
     private float lastSendTime;
     private float sendInterval = 0.05f;
     
-    // Optimization: track previous state to avoid sending unchanged data
     private bool lastWasCharging = false;
     private float lastAngle = 0f;
     private float lastChargePercent = 0f;
@@ -116,13 +115,10 @@ public class LocalPlayerBowController : MonoBehaviour
                 animator.SetTrigger("shoot");
             }
             
-            // Send final bow state and shoot arrow
             SendBowStateIntent();
             SendArrowShootIntent();
         }
     }
-
-
 
     private void UpdateVisualFeedback()
     {
@@ -133,10 +129,6 @@ public class LocalPlayerBowController : MonoBehaviour
     }
 
 
-    /// <summary>
-    /// Send bow state intent event (new event-based approach)
-    /// Only sends when there's a significant change to optimize network traffic
-    /// </summary>
     private void SendBowStateIntent()
     {
         if (heroConnection != null && heroConnection.State == HubConnectionState.Connected)
@@ -147,10 +139,9 @@ public class LocalPlayerBowController : MonoBehaviour
             float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
             float chargePercent = chargeTime / maxChargeTime;
 
-            // Only send if there's a significant change
             bool chargingChanged = (isCharging != lastWasCharging);
-            bool angleChanged = Mathf.Abs(angle - lastAngle) > 5f; // 5 degree threshold
-            bool chargeChanged = Mathf.Abs(chargePercent - lastChargePercent) > 0.05f; // 5% threshold
+            bool angleChanged = Mathf.Abs(angle - lastAngle) > 5f; 
+            bool chargeChanged = Mathf.Abs(chargePercent - lastChargePercent) > 0.05f; 
 
             if (chargingChanged || angleChanged || chargeChanged)
             {
@@ -166,7 +157,6 @@ public class LocalPlayerBowController : MonoBehaviour
                 heroConnection.InvokeAsync("OnBowStateIntent", bowStateIntent);
                 lastSendTime = Time.time;
                 
-                // Update tracking variables
                 lastWasCharging = isCharging;
                 lastAngle = angle;
                 lastChargePercent = chargePercent;
@@ -174,9 +164,7 @@ public class LocalPlayerBowController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Send arrow shoot intent event to server
-    /// </summary>
+ 
     private void SendArrowShootIntent()
     {
         Debug.Log($"[LocalPlayerBowController] SendArrowShootIntent called - heroConnection: {heroConnection != null}, State: {heroConnection?.State}");

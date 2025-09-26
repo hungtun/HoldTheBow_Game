@@ -4,6 +4,7 @@ using SharedLibrary.Responses;
 using SharedLibrary.Events;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Collections;
 
 public class EnemyClientManager : MonoBehaviour
 {
@@ -11,6 +12,7 @@ public class EnemyClientManager : MonoBehaviour
 
     private HubConnection _connection;
     private Dictionary<int, GameObject> activeEnemies = new Dictionary<int, GameObject>();
+    private HashSet<int> reportedHitbox = new HashSet<int>();
 
     public async void Initialize(string baseUrl, string jwtToken)
     {
@@ -26,7 +28,7 @@ public class EnemyClientManager : MonoBehaviour
         _connection.On<EnemySpawnResponse>("EnemySpawned", OnEnemySpawned);
         _connection.On<EnemyMoveUpdateEvent>("EnemyMoveUpdate", OnEnemyMoveUpdate);
         _connection.On<int>("EnemyRemoved", OnEnemyRemoved);
-        _connection.On<ArrowHitEvent>("ArrowHit", OnEnemyHit);     
+        _connection.On<ArrowHitEvent>("ArrowHit", OnEnemyHit);
         await _connection.StartAsync();
     }
 
@@ -40,31 +42,68 @@ public class EnemyClientManager : MonoBehaviour
         {
             return;
         }
-        
+
         var obj = Instantiate(enemyPrefab, new Vector3(resp.X, resp.Y, 0f), Quaternion.identity);
         obj.name = $"Enemy_{resp.EnemyId}_{resp.EnemyName}";
 
-        // Ensure EnemyController is attached
         var enemyController = obj.GetComponent<EnemyController>();
         if (enemyController == null)
         {
             enemyController = obj.AddComponent<EnemyController>();
-            Debug.Log($"[EnemyClientManager] Added EnemyController to enemy {resp.EnemyId}");
         }
+
+        var healthBar = obj.GetComponentInChildren<HealthBar>(true);
+        if (healthBar != null)
+        {
+            healthBar.SetMaxHealth(resp.Health > 0 ? resp.Health : 100);
+            healthBar.SetHealth(resp.Health > 0 ? resp.Health : 100);
+        }
+        StartCoroutine(SendEnemyHitboxNextFrame(resp.EnemyId, obj));
+
 
         activeEnemies[resp.EnemyId] = obj;
     }
 
-    /// <summary>
-    /// Handle enemy movement update event (new event-based approach)
-    /// </summary>
+    private IEnumerator SendEnemyHitboxNextFrame(int enemyId, GameObject obj)
+    {
+        yield return null; 
+        if (reportedHitbox.Contains(enemyId)) yield break;
+
+        var box = obj.GetComponent<BoxCollider2D>();
+        if (box != null)
+        {
+            var b = box.bounds;
+            Vector2 centerOffset = (Vector2)(b.center - obj.transform.position);
+            Vector2 half = (Vector2)b.extents;
+
+            var task = _connection.InvokeAsync("ReportEnemyHitbox", new EnemyHitboxReportEvent
+            {
+                EnemyId = enemyId,
+                CenterOffsetX = centerOffset.x,
+                CenterOffsetY = centerOffset.y,
+                HalfSizeX = half.x,
+                HalfSizeY = half.y
+            });
+            while (!task.IsCompleted)
+            {
+                yield return null;
+            }
+            if (task.IsFaulted)
+            {
+                Debug.LogWarning($"[EnemyClientManager] ReportEnemyHitbox failed for {enemyId}: {task.Exception?.GetBaseException().Message}");
+                yield break;
+            }
+            reportedHitbox.Add(enemyId);
+        }
+    }
+
+ 
     private void OnEnemyMoveUpdate(EnemyMoveUpdateEvent updateEvent)
     {
         if (updateEvent.MapId != "Home") return;
 
         if (!activeEnemies.TryGetValue(updateEvent.EnemyId, out var enemyObj))
         {
-            // If enemy doesn't exist, create it
             if (enemyPrefab != null)
             {
                 enemyObj = Instantiate(enemyPrefab, new Vector3(updateEvent.X, updateEvent.Y, 0f), Quaternion.identity);
@@ -74,7 +113,6 @@ public class EnemyClientManager : MonoBehaviour
             return;
         }
 
-        // Update enemy position
         var logEnemyController = enemyObj.GetComponent<LogEnemyController>();
         if (logEnemyController != null)
         {
@@ -99,7 +137,7 @@ public class EnemyClientManager : MonoBehaviour
         }
         catch (System.Exception ex)
         {
-            Debug.LogError($"[EnemyClientManager] ClearAllEnemies failed: {ex.Message}");
+            Debug.LogError($"ClearAllEnemies failed: {ex.Message}");
         }
     }
 
@@ -116,7 +154,6 @@ public class EnemyClientManager : MonoBehaviour
                     var enemyController = enemyObj.GetComponent<EnemyController>();
                     if (enemyController != null)
                     {
-                        // Play death effect before destroying
                         enemyController.Die();
                     }
                     else
@@ -125,7 +162,7 @@ public class EnemyClientManager : MonoBehaviour
                     }
                 }
                 activeEnemies.Remove(enemyId);
-                Debug.Log($"[EnemyClientManager] Enemy {enemyId} died and removed");
+                
             }
         }
         catch (System.Exception ex)
@@ -136,36 +173,46 @@ public class EnemyClientManager : MonoBehaviour
 
     private void OnEnemyHit(ArrowHitEvent hitEvent)
     {
-        Debug.Log($"[EnemyClientManager] OnEnemyHit received - HitType: {hitEvent.HitType}, TargetId: {hitEvent.TargetId}, RemainingHealth: {hitEvent.RemainingHealth}");
         
+
         if (hitEvent.HitType == "Enemy" && hitEvent.TargetId.HasValue)
         {
             int enemyId = hitEvent.TargetId.Value;
-            
+
             if (activeEnemies.ContainsKey(enemyId))
             {
                 var enemyObj = activeEnemies[enemyId];
                 var enemyController = enemyObj.GetComponent<EnemyController>();
+
                 
-                Debug.Log($"[EnemyClientManager] Enemy {enemyId} found, EnemyController: {enemyController != null}");
-                
+
                 if (enemyController != null)
                 {
-                    // Trigger red flash effect
                     enemyController.FlashRed();
+
+                    var healthBar = enemyObj.GetComponentInChildren<HealthBar>(true);
+                    if (healthBar != null && hitEvent.RemainingHealth.HasValue)
+                    {
+                        healthBar.SetHealth(hitEvent.RemainingHealth.Value);
+                    }
+
                     
-                    Debug.Log($"[EnemyClientManager] Enemy {enemyId} hit! Remaining health: {hitEvent.RemainingHealth}");
                 }
                 else
                 {
-                    Debug.LogError($"[EnemyClientManager] EnemyController not found on enemy {enemyId}, adding one now...");
+                    Debug.LogError($"EnemyController not found on enemy {enemyId}, adding one now...");
                     enemyController = enemyObj.AddComponent<EnemyController>();
                     enemyController.FlashRed();
+                    var healthBar = enemyObj.GetComponentInChildren<HealthBar>(true);
+                    if (healthBar != null && hitEvent.RemainingHealth.HasValue)
+                    {
+                        healthBar.SetHealth(hitEvent.RemainingHealth.Value);
+                    }
                 }
             }
             else
             {
-                Debug.LogWarning($"[EnemyClientManager] Enemy {enemyId} not found in activeEnemies");
+                
             }
         }
     }
